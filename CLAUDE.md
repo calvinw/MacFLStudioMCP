@@ -20,7 +20,7 @@ End-to-end testing passed through Step 4 of a manual test plan:
 | 2 | Transport, patterns, tempo, channels via REPL | ✅ all visible in FL |
 | 3 | Iterate patterns + open each in piano roll | ✅ |
 | 4 | Piano roll edit (clear/add/transpose/clear via Cmd+Opt+Y) | ✅ |
-| 5 | Through Claude Code MCP | not yet tested |
+| 5 | Through Claude Code MCP | ✅ multi-channel edit + end-of-edit cycle verified |
 
 The MCP server is registered with Claude Code (`claude mcp list` shows `fl-studio-mcp ✓ Connected`).
 
@@ -248,3 +248,4 @@ piano-roll edits, all working on macOS 26.3.1 / FL Studio 2025.
 - "Will MIDI notes be up to date?" → Yes — stateless on-demand queries from the bridge. No caching/state-mirror like the user's other repo had.
 - "Can we iterate patterns?" → Yes; `test_step3_iterate_patterns.py` demonstrates.
 - "Can we control which channel × pattern is in the piano roll?" → Yes, via `ui.openPianoRoll(channel=N, pattern=M)`; demonstrated in `test_retarget.py`.
+- "Notes wiped during end-of-edit cycle" → **Fixed.** Root cause: `stage_and_run` in `file_bridge.py` was calling `_append_request()` in a loop, which read-and-appended to `fLMCP_request.json` on every action. If the pyscript hadn't cleared the file yet from a prior run, stale actions (especially `clear`) accumulated and re-executed on the next `Cmd+Opt+Y`. Fix: replaced the loop with a single `_write_json(REQUEST_FILE, actions)` — fresh atomic overwrite, no accumulation. Confirmed working: multi-channel edit (2 channels, different notes) followed by end-of-edit cycle retarget reads back correct notes on both channels.

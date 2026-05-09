@@ -51,7 +51,7 @@ import ui
 # Configuration
 # ----------------------------------------------------------------------------
 
-BRIDGE_VERSION = "0.2.0-file"
+BRIDGE_VERSION = "0.2.1-retarget-fix"
 MAX_REQUESTS_PER_TICK = 32
 
 
@@ -1336,25 +1336,35 @@ def h_ui_open_piano_roll(p):
     """
     ch = int(p["channel"])
     requested_pattern = p.get("pattern")
+    force_retarget = p.get("force_retarget", False)
 
-    try:
-        current_pattern = patterns.patternNumber()
-        current_channel = channels.selectedChannel(canBeNone=True, indexGlobal=True)
-        pr_visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
-    except Exception:
-        current_pattern = None
-        current_channel = None
-        pr_visible = False
-
-    pattern_matches = requested_pattern is None or int(requested_pattern) == current_pattern
-    channel_matches = current_channel == ch
-    if pr_visible and pattern_matches and channel_matches:
+    # Skip retarget ONLY if:
+    # 1. No explicit pattern was requested (caller wants whatever's already showing)
+    # 2. Piano roll is visible
+    # 3. The requested channel matches what's selected
+    #
+    # We ALWAYS retarget when an explicit pattern is provided, because:
+    # - The viewport may be stale/blank from previous openEventEditor calls
+    # - After pyscript edits, the piano roll doesn't auto-refresh
+    # - Pattern data is per-channel-per-pattern, so switching patterns MUST retarget
+    
+    if requested_pattern is None and not force_retarget:
+        # Implicit "show me whatever's open" request
         try:
-            event_id = channels.getRecEventId(ch)
+            current_channel = channels.selectedChannel(canBeNone=True, indexGlobal=True)
+            pr_visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
         except Exception:
-            event_id = None
-        return {"ok": True, "channel": ch, "retargeted": False,
-                "event_id": event_id, "no_op": True}
+            current_channel = None
+            pr_visible = False
+        
+        channel_matches = current_channel == ch
+        if pr_visible and channel_matches:
+            try:
+                event_id = channels.getRecEventId(ch)
+            except Exception:
+                event_id = None
+            return {"ok": True, "channel": ch, "retargeted": False,
+                    "event_id": event_id, "no_op": True}
 
     if requested_pattern is not None:
         patterns.jumpToPattern(int(requested_pattern))

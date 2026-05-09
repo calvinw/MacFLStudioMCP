@@ -51,7 +51,7 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
                 return json.loads(_PR_STATE_FILE.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        time.sleep(0.05)
+        time.sleep(0.01)
     return None
 
 
@@ -88,46 +88,54 @@ def _mac_activate_app(name: str) -> None:
         pass
 
 
+_FL_FRONTMOST_UNTIL = 0.0  # monotonic timestamp through which we trust FL is frontmost
+
+
 def send_hotkey_mac() -> bool:
-    """Focus FL Studio, send Cmd+Opt+Y, then return focus to the previous app.
+    """Focus FL Studio if needed, send Cmd+Opt+Y. Leaves FL focused on exit.
+
+    Skips the "activate FL" osascript if FL is already frontmost (chains naturally
+    after the first call). Caches that-FL-is-frontmost for 5 seconds after each call
+    to skip the frontmost-check osascript on rapid chains. Does NOT restore prior
+    app focus.
 
     Returns True on success.
     """
+    global _FL_FRONTMOST_UNTIL
     if sys.platform != "darwin":
         return False
     try:
         import subprocess
         import time as _time
 
-        prev_app = _mac_frontmost_app()
-
-        # Bring FL Studio (OsxFL) to front via AppleScript
-        subprocess.run(
-            ["osascript", "-e",
-             'tell application "System Events"\n'
-             '    if exists process "OsxFL" then\n'
-             '        tell process "OsxFL" to set frontmost to true\n'
-             '    end if\n'
-             'end tell'],
-            timeout=3, capture_output=True,
-        )
-        _time.sleep(0.1)
+        now = _time.monotonic()
+        # Skip the frontmost check if we recently sent a keystroke (FL still focused).
+        fl_known_frontmost = now < _FL_FRONTMOST_UNTIL
+        if not fl_known_frontmost and _mac_frontmost_app() != "OsxFL":
+            subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events"\n'
+                 '    if exists process "OsxFL" then\n'
+                 '        tell process "OsxFL" to set frontmost to true\n'
+                 '    end if\n'
+                 'end tell'],
+                timeout=3, capture_output=True,
+            )
+            _time.sleep(0.05)
 
         from pynput.keyboard import Key, Controller
         kb = Controller()
         kb.press(Key.cmd)
         kb.press(Key.alt)
-        _time.sleep(0.05)
+        _time.sleep(0.02)
         kb.press("y")
         kb.release("y")
-        _time.sleep(0.05)
+        _time.sleep(0.02)
         kb.release(Key.alt)
         kb.release(Key.cmd)
 
-        # Brief pause so the keystroke lands in FL before we steal focus back.
-        _time.sleep(0.05)
-        if prev_app and prev_app != "OsxFL":
-            _mac_activate_app(prev_app)
+        # FL stays focused; trust this for the next 5s on chained calls.
+        _FL_FRONTMOST_UNTIL = _time.monotonic() + 5.0
         return True
     except Exception as e:
         log.warning("mac keystroke failed: %s", e)

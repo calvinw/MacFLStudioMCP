@@ -84,7 +84,7 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
         data = _read_json(STATE_FILE)
         if data is not None:
             return data
-        time.sleep(0.05)
+        time.sleep(0.01)
     return None
 
 
@@ -103,8 +103,7 @@ def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
         }
 
     clear_state()
-    for a in actions:
-        _append_request(a)
+    _write_json(REQUEST_FILE, actions)
 
     if sys.platform == "darwin":
         fired = send_hotkey_mac()

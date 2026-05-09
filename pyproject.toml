@@ -13,10 +13,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mac = ["pynput>=1.7"]
+mac = ["pynput>=1.7", "PyQt5>=5.15"]
 
 [project.scripts]
 fl-studio-mcp = "fl_studio_mcp.server:main"
+fl-studio-mcp-hotkey = "fl_studio_mcp.hotkey_button:main"
 
 [build-system]
 requires = ["hatchling"]

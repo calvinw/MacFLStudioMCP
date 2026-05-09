@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -38,13 +39,17 @@ def register(mcp: FastMCP) -> None:
     def ui_open_piano_roll_for_channel(channel: int, pattern: int | None = None) -> dict:
         """Open the piano roll for a given channel (optionally switch pattern first).
 
-        Calling FL's ``ui.openEventEditor`` to retarget the piano roll leaves
-        the viewport blank until the next piano-roll script run forces a
-        redraw, so when the bridge actually retargets we follow up with a
-        no-op script trigger to refresh what the user sees.
+        After retargeting, waits for the piano roll to settle then fires a
+        no-op script run to re-bind ComposeWithLLM as the active script and
+        redraw the viewport. This ensures subsequent piano_roll_add_notes calls
+        work correctly without requiring a manual ComposeWithLLM click.
         """
         result = get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern)
         if result.get("retargeted") and is_installed():
+            # Give the piano roll time to finish initialising before triggering
+            # the script — without this delay the keystroke lands too early and
+            # FL Studio ignores it, leaving ComposeWithLLM unbound.
+            time.sleep(1.0)
             refresh = stage_and_run([{"action": "export_only"}])
             result["viewport_refresh"] = {
                 "ok": refresh.get("ok"),

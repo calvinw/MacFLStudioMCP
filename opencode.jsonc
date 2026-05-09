@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "fl-studio-mcp": {
+      "type": "local",
+      "command": [
+        "/Users/calvinw/develop/FLStudioMCP/.venv/bin/python",
+        "-m",
+        "fl_studio_mcp"
+      ],
+      "enabled": true,
+      "environment": {}
+    }
+  }
+}

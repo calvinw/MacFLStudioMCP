@@ -67,7 +67,7 @@ match the Python signatures.
 `plugin_set_preset(index, preset, slot, location)`,
 `plugin_show_editor(...)`, `plugin_list_mixer_track(track)`
 
-## Piano roll (10)
+## Piano roll (11)
 
 `piano_roll_add_notes(channel, notes, pattern, clear_first)` — notes are
 dicts `{midi, time (bars), duration (bars), velocity (0..1), pan?}`.
@@ -76,6 +76,7 @@ dicts `{midi, time (bars), duration (bars), velocity (0..1), pan?}`.
 `piano_roll_delete_notes(channel, notes, pattern)`
 `piano_roll_clear(channel, pattern)`
 `piano_roll_read(channel, pattern)`
+`piano_roll_read_patterns_autolocate(patterns_to_read, restore_start)` — read notes across patterns by switching patterns only and relying on FL auto-locate for the active piano-roll channel. Avoids explicit `openEventEditor` retargeting and restores the starting pattern by default.
 `piano_roll_quantize(channel, grid_bars, strength, pattern)`
 `piano_roll_transpose(channel, semitones, pattern)`
 `piano_roll_humanize(channel, timing_jitter_bars, velocity_jitter, pattern)`

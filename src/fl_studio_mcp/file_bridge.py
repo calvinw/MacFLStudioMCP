@@ -110,7 +110,7 @@ def _focus_piano_roll() -> None:
         pass  # bridge offline — keystroke goes to whatever is focused
 
 
-def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
+def stage_and_run(actions: list[dict], wait_sec: float = 3.0, focus_piano_roll: bool = True) -> dict:
     """Queue one or more piano-roll actions, fire the hotkey, wait for state."""
     from .keystroke import send_hotkey_mac, send_hotkey_windows
 
@@ -127,10 +127,11 @@ def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
     clear_state()
     _write_json(REQUEST_FILE, actions)
 
-    # Raise the piano roll window inside FL before sending the hotkey so the
-    # keystroke is guaranteed to reach the ComposeWithLLM script rather than
-    # landing on the channel rack or mixer.
-    _focus_piano_roll()
+    if focus_piano_roll:
+        # Raise the piano roll window inside FL before sending the hotkey so the
+        # keystroke is guaranteed to reach the ComposeWithLLM script rather than
+        # landing on the channel rack or mixer.
+        _focus_piano_roll()
 
     if sys.platform == "darwin":
         fired = send_hotkey_mac()

@@ -1338,33 +1338,28 @@ def h_ui_open_piano_roll(p):
     requested_pattern = p.get("pattern")
     force_retarget = p.get("force_retarget", False)
 
-    # Skip retarget ONLY if:
-    # 1. No explicit pattern was requested (caller wants whatever's already showing)
-    # 2. Piano roll is visible
-    # 3. The requested channel matches what's selected
-    #
-    # We ALWAYS retarget when an explicit pattern is provided, because:
-    # - The viewport may be stale/blank from previous openEventEditor calls
-    # - After pyscript edits, the piano roll doesn't auto-refresh
-    # - Pattern data is per-channel-per-pattern, so switching patterns MUST retarget
-    
-    if requested_pattern is None and not force_retarget:
-        # Implicit "show me whatever's open" request
+    # Skip retargeting when FL is already showing the requested target. Calling
+    # openEventEditor for the current piano roll can visibly tear down/rebuild
+    # the window even though no target change is needed.
+    if not force_retarget:
         try:
             current_channel = channels.selectedChannel(canBeNone=True, indexGlobal=True)
+            current_pattern = patterns.patternNumber()
             pr_visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
         except Exception:
             current_channel = None
+            current_pattern = None
             pr_visible = False
-        
+
         channel_matches = current_channel == ch
-        if pr_visible and channel_matches:
+        pattern_matches = requested_pattern is None or current_pattern == int(requested_pattern)
+        if pr_visible and channel_matches and pattern_matches:
             try:
-                event_id = channels.getRecEventId(ch)
+                event_id = channels.getRecEventId(ch) + getattr(midi, "REC_Chan_PianoRoll", 0)
             except Exception:
                 event_id = None
             return {"ok": True, "channel": ch, "retargeted": False,
-                    "event_id": event_id, "no_op": True}
+                    "pattern": current_pattern, "event_id": event_id, "no_op": True}
 
     if requested_pattern is not None:
         patterns.jumpToPattern(int(requested_pattern))

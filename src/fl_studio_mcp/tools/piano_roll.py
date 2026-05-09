@@ -23,10 +23,12 @@ Requirements on user side:
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from ..bridge_client import get_client
 from ..file_bridge import stage_and_run
 
 
@@ -136,6 +138,66 @@ def register(mcp: FastMCP) -> None:
     def piano_roll_read() -> dict:
         """Read back the current piano-roll state (returns all notes)."""
         return stage_and_run([{"action": "export_only"}], wait_sec=5.0)
+
+    @mcp.tool()
+    def piano_roll_read_patterns_autolocate(patterns_to_read: list[int] | None = None,
+                                           restore_start: bool = True) -> dict:
+        """Read notes across patterns using FL's auto-located piano-roll channel.
+
+        This avoids explicit channel retargeting/openEventEditor. It changes only
+        the selected pattern, triggers ComposeWithLLM, and records the selected
+        channel FL reports after each pattern switch.
+        """
+        c = get_client()
+        start_pattern = c.call("patterns.current")
+        start_channel = c.call("channels.selected")
+        all_patterns = c.call("patterns.list").get("patterns", [])
+
+        wanted = set(patterns_to_read or [p["index"] for p in all_patterns])
+        patterns = [p for p in all_patterns if p["index"] in wanted]
+        start_idx = start_pattern.get("index")
+        if start_idx is not None:
+            for i, pat in enumerate(patterns):
+                if pat["index"] == start_idx:
+                    patterns = patterns[i:] + patterns[:i]
+                    break
+
+        results = []
+        for i, pat in enumerate(patterns):
+            if i > 0 or pat["index"] != start_idx:
+                c.call("patterns.select", index=pat["index"])
+                time.sleep(0.2)
+
+            read_result = stage_and_run([{"action": "export_only"}], wait_sec=5.0)
+            selected_channel = c.call("channels.selected").get("channel")
+            state = read_result.get("state") or {}
+            results.append({
+                "pattern": pat,
+                "channel": selected_channel,
+                "ok": bool(read_result.get("ok")),
+                "hotkey_sent": read_result.get("hotkey_sent"),
+                "note_count": len(state.get("notes") or []),
+                "notes": state.get("notes") or [],
+            })
+
+        restored = None
+        if restore_start and start_idx is not None:
+            c.call("patterns.select", index=start_idx)
+            time.sleep(0.2)
+            restore_result = stage_and_run([{"action": "export_only"}], wait_sec=5.0)
+            restored = {
+                "pattern": start_pattern,
+                "channel": start_channel.get("channel"),
+                "ok": bool(restore_result.get("ok")),
+            }
+
+        return {
+            "start_pattern": start_pattern,
+            "start_channel": start_channel.get("channel"),
+            "results": results,
+            "restored": restored,
+            "total_notes": sum(r["note_count"] for r in results),
+        }
 
     @mcp.tool()
     def piano_roll_quantize(grid_bars: float = 0.25,

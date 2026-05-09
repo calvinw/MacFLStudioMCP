@@ -77,23 +77,15 @@ This actually fixes a problem the user had in their other repo (`calvinw/fl-stud
 
 `flpianoroll` (the only API for adding/deleting notes) is sandboxed to piano-roll scripts. The bridge can't call it. The trick is to install a piano-roll script (`ComposeWithLLM.pyscript`) that's bound to `Cmd+Opt+Y`, then synthesize that keystroke from outside FL after staging a JSON request file.
 
-We added a Mac implementation in `keystroke.py`:
+We added a Mac implementation in `keystroke.py`. Current macOS builds use the app name `FL Studio 2025` and prefer a native System Events keystroke, with `pynput` as fallback:
 
 ```python
 def send_hotkey_mac() -> bool:
-    # Bring FL Studio to front
+    subprocess.run(['osascript', '-e',
+                    'tell application "FL Studio 2025" to activate'])
     subprocess.run(['osascript', '-e',
                     'tell application "System Events" to '
-                    'tell process "OsxFL" to set frontmost to true'])
-    time.sleep(0.1)
-    # Send keystroke
-    from pynput.keyboard import Key, Controller
-    kb = Controller()
-    kb.press(Key.cmd); kb.press(Key.alt)
-    time.sleep(0.05)
-    kb.press('y'); kb.release('y')
-    time.sleep(0.05)
-    kb.release(Key.alt); kb.release(Key.cmd)
+                    'keystroke "y" using {command down, option down}'])
     return True
 ```
 
@@ -104,10 +96,10 @@ Requires Accessibility permission in System Settings → Privacy & Security → 
 `ui.showWindow(piano_roll)` opens the window but doesn't pick which channel's notes are loaded. To force retargeting:
 
 ```python
-event_id = channels.getRecEventId(channel_index)
+event_id = channels.getRecEventId(channel_index) + midi.REC_Chan_PianoRoll
 visible = ui.getVisible(piano_roll_window) == 1
 new_window = 0 if visible else 1
-ui.openEventEditor(event_id, 1, new_window)  # mode=1 → piano-roll editor
+ui.openEventEditor(event_id, midi.EE_PR, new_window)
 ```
 
 **Important:** when `visible=True`, `new_window=0` reuses the existing window. Passing `new_window=1` repeatedly creates duplicate `PRForm` components and crashes FL Studio with:
@@ -116,7 +108,20 @@ ui.openEventEditor(event_id, 1, new_window)  # mode=1 → piano-roll editor
 Exception: Duplicate name: A component named "PRForm" already exists
 ```
 
-### 9. Optional heavy deps
+Even with `new_window=0`, `openEventEditor` can visually tear down/rebuild the piano-roll window when changing channels. Prefer avoiding explicit channel retargeting when FL's auto-locate behavior can do the job.
+
+### 9. Pattern-only / auto-locate reads
+
+For projects where each pattern's notes live on its expected/main channel and FL auto-locate follows pattern changes, we can read notes across patterns without calling `ui.openEventEditor`:
+
+```python
+patterns.jumpToPattern(pattern_index)
+stage_and_run([{"action": "export_only"}])
+```
+
+The MCP tool `piano_roll_read_patterns_autolocate(patterns_to_read=None, restore_start=True)` implements this. It records the starting pattern/channel, cycles patterns using only `patterns.select`, triggers `ComposeWithLLM` for each, returns notes, and restores the starting pattern. This is the preferred read path when we want to avoid the piano-roll window disappearing/reappearing.
+
+### 10. Optional heavy deps
 
 `tools/audio.py` and `tools/voice.py` import `numpy`, `librosa`, etc. at module load. These are heavy and not needed for the core 90% of functionality. `server.py` imports them inside `try/except ImportError` and skips registration if unavailable, logging `voice tools disabled` / `audio tools disabled`.
 
@@ -130,7 +135,7 @@ A heartbeat log in `OnIdle` is a useful diagnostic — if no heartbeats appear w
 
 ## Failure modes still possible
 
-- **Piano roll visual cache staleness** — when reusing the piano-roll window (`new_window=0`), notes can briefly appear missing until the user closes+reopens. Workaround: live with it.
+- **Piano roll visual rebuilds** — explicit channel retargeting via `openEventEditor` can make the piano-roll window disappear/reappear. Prefer pattern-only auto-locate reads when possible; use explicit `ui.openPianoRoll` only when the channel must be forced.
 - **The user must run `ComposeWithLLM` once via the piano-roll scripts dropdown** at the start of each FL session. `Cmd+Opt+Y` re-runs whichever piano-roll script was last launched manually.
 - **The user must have the right channel × pattern's piano roll loaded before piano-roll edits.** Programmatic retargeting via `ui.openPianoRoll` works (see point 8 above), but if the user manually navigates afterward without going through `ui.openPianoRoll`, the next piano-roll edit will affect whichever channel is currently shown.
 
@@ -143,7 +148,8 @@ A heartbeat log in `OnIdle` is a useful diagnostic — if no heartbeats appear w
 - `src/fl_studio_mcp/keystroke.py` — added `send_hotkey_mac`, kept `send_hotkey_windows`.
 - `src/fl_studio_mcp/server.py` — conditional import for audio/voice tools.
 - `src/fl_studio_mcp/tools/meta.py` — updated docstrings/hints for file-bus terminology.
+- `src/fl_studio_mcp/tools/piano_roll.py` — added `piano_roll_read_patterns_autolocate` for MCP-native pattern-only reads.
 - `tests/test_protocol.py` — rewrote against fake worker thread that watches a tmp bus dir.
 - `pyproject.toml` — added `[mac]` optional extra (`pynput`).
 - `install_mac.sh` — NEW.
-- `scripts/smoke_test_mac.py`, `scripts/test_step{2,3,4}_*.py`, `scripts/test_retarget.py` — NEW.
+- `scripts/smoke_test_mac.py`, `scripts/test_step{2,3,4}_*.py`, `scripts/test_retarget.py`, `scripts/test_read_all_notes.py` — NEW.

@@ -246,6 +246,7 @@ before issuing edits.
 | TCP bind error in FL output | Another copy of fLMCP is running, or firewall blocking `127.0.0.1:9876`. Close the other instance and allow `FL64.exe` in Windows Defender. |
 | Piano-roll edits don't apply | fLMCP focuses FL Studio and sends `Ctrl+Alt+Y`. If you rebound the hotkey, or FL can't be foregrounded, press `Ctrl+Alt+Y` manually once after the tool call. |
 | Hotkey fires the wrong script | Open any piano roll → right-click the script dropdown → set `ComposeWithLLM` as the default. |
+| Piano-roll window disappears/reappears while reading multiple patterns | Explicit channel retargeting uses FL's `openEventEditor`, which can rebuild the window. Prefer `piano_roll_read_patterns_autolocate` when FL auto-locate is enabled and each pattern's notes are on its main channel. |
 | `playlist_place_pattern` returns a structured error | FL's public Python API does not yet expose clip placement. Documented in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). |
 | `voice_*` tools error with `no module named sounddevice` | Install the audio extras: `pip install "fl-studio-mcp[audio]"` (or re-run `install_windows.ps1`). |
 | `voice_to_piano_roll` returns 0 notes | Hum louder, check `voice_list_devices()` for the right mic, or lower `min_confidence`. |

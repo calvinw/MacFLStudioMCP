@@ -142,7 +142,8 @@ scripts/
 ├── test_step2_interactive.py      # Step 2 — transport/patterns/tempo
 ├── test_step3_iterate_patterns.py # Step 3 — pattern iteration workflow
 ├── test_step4_piano_roll.py       # Step 4 — piano roll edit cycle
-└── test_retarget.py               # tests ui.openPianoRoll channel retargeting
+├── test_retarget.py               # tests ui.openPianoRoll channel retargeting
+└── test_read_all_notes.py         # reads main pattern notes using pattern switching/autolocate
 
 install_mac.sh                     # NEW — Mac installer, replaces install_windows.ps1
 docs/MAC_PORT.md                   # NEW — technical archaeology of the port
@@ -167,9 +168,11 @@ Likely causes, in order:
 
 ### Piano roll channel retargeting
 
-`ui.openPianoRoll(channel=N, pattern=M)` programmatically loads channel N's piano roll for pattern M, using `channels.getRecEventId(N)` + `ui.openEventEditor(event_id, 1, new_window)`. **Critical:** if piano roll is already visible, use `new_window=0` to reuse — passing `new_window=1` repeatedly creates duplicate `PRForm` components and crashes FL Studio with `"Duplicate name: A component named PRForm already exists"`.
+`ui.openPianoRoll(channel=N, pattern=M)` programmatically loads channel N's piano roll for pattern M, using the documented piano-roll event id: `channels.getRecEventId(N) + midi.REC_Chan_PianoRoll`, then `ui.openEventEditor(event_id, midi.EE_PR, new_window)`. **Critical:** if piano roll is already visible, use `new_window=0` to reuse — passing `new_window=1` repeatedly creates duplicate `PRForm` components and crashes FL Studio with `"Duplicate name: A component named PRForm already exists"`.
 
-There's a known minor visual glitch where reusing the window can leave stale notes briefly until close+reopen. Live with this for now; not worth crashing FL over.
+`openEventEditor` can still visibly tear down/rebuild the piano-roll window when changing channels. Avoid it when possible. If FL's auto-locate behavior is active and each pattern's notes are on its expected/main channel, prefer pattern-only switching: `patterns.select(pattern)` followed by `piano_roll_read()` / `stage_and_run([{action: "export_only"}])`. The MCP tool `piano_roll_read_patterns_autolocate(patterns_to_read=None, restore_start=True)` implements this workflow and restores the starting pattern.
+
+There's a known visual glitch where explicit channel retargeting can make the piano-roll window disappear/reappear. Pattern-only switching avoids that for projects where auto-locate follows the intended channel.
 
 ### Bridge handlers in the device script
 
@@ -208,6 +211,9 @@ cd /Users/calvinw/develop/FLStudioMCP
 
 # Test piano-roll channel retargeting
 .venv/bin/python scripts/test_retarget.py
+
+# Read notes from main/autolocated channels without explicit channel retargeting
+.venv/bin/python scripts/test_read_all_notes.py
 
 # Run unit tests (5 pass; 2 fail with no module 'numpy' — those are expected)
 .venv/bin/python -m pytest tests/test_protocol.py

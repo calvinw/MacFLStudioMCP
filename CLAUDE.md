@@ -10,9 +10,10 @@ This file gives any future Claude session enough context to be useful immediatel
 1. This is a macOS FL Studio MCP server. The remote is `https://github.com/calvinw/FLStudioMCP.git` (already configured).
 2. Everything is committed and pushed. Start by running `git status` to see if there are any uncommitted local changes.
 3. **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
-4. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
-5. **Piano roll workflow is mandatory** — read → plan → write (plural) → confirm. See the dedicated section below.
-6. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
+4. **After any code change to the MCP server, tell the user to restart it.** The server runs as a persistent process; changes to `src/fl_studio_mcp/` are not picked up until restart. In Claude Code: `/mcp` → restart `fl-studio-mcp`, or start a fresh session.
+5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
+6. **Piano roll workflow is mandatory** — read → plan → write (plural) → confirm. See the dedicated section below.
+7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
 
 ---
 

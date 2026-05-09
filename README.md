@@ -162,8 +162,8 @@ around visually.**
 1. **Read first** — `piano_roll_read_patterns_autolocate()` before any write.
 2. **Plan** — derive notes from the read data; never invent from memory.
 3. **Write** — `piano_roll_write_patterns` (plural) for multi-pattern edits.
-   Do not call `piano_roll_write_pattern` (singular) in a loop — it restores
-   FL to the starting pattern after every single write.
+   Do not call `piano_roll_write_pattern` (singular) in a loop — it fires a
+   separate `Cmd+Opt+Y` per write and is slower.
 4. **Confirm** — read again if there is any doubt the write landed.
 
 Pattern writes share a single file bus and a single `Cmd+Opt+Y` trigger —

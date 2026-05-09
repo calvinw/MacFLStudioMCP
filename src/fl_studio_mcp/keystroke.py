@@ -1,8 +1,9 @@
-"""Send Ctrl+Alt+Y to the FL Studio window to fire the companion piano-roll pyscript.
+"""Send Ctrl+Alt+Y (Windows) or Cmd+Opt+Y (macOS) to FL Studio to fire the
+companion piano-roll pyscript.
 
-Strategy: find the FL Studio foreground window, bring it to front, send the
-hotkey via Win32 SendInput. Requires pywin32 on Windows; on other platforms
-falls back to a no-op and relies on user pressing the hotkey manually.
+Windows: Win32 SendInput.
+macOS:   osascript to focus OsxFL + pynput to send the keystroke.
+Other:   no-op; user must press the hotkey manually.
 """
 
 from __future__ import annotations
@@ -52,6 +53,85 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
                 pass
         time.sleep(0.05)
     return None
+
+
+def _mac_frontmost_app() -> str | None:
+    """Return the name of the frontmost macOS application, or None on failure."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to '
+             'name of first application process whose frontmost is true'],
+            timeout=2, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            name = result.stdout.strip()
+            return name or None
+    except Exception:
+        pass
+    return None
+
+
+def _mac_activate_app(name: str) -> None:
+    if sys.platform != "darwin" or not name:
+        return
+    try:
+        import subprocess
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{name}" to activate'],
+            timeout=2, capture_output=True,
+        )
+    except Exception:
+        pass
+
+
+def send_hotkey_mac() -> bool:
+    """Focus FL Studio, send Cmd+Opt+Y, then return focus to the previous app.
+
+    Returns True on success.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        import subprocess
+        import time as _time
+
+        prev_app = _mac_frontmost_app()
+
+        # Bring FL Studio (OsxFL) to front via AppleScript
+        subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events"\n'
+             '    if exists process "OsxFL" then\n'
+             '        tell process "OsxFL" to set frontmost to true\n'
+             '    end if\n'
+             'end tell'],
+            timeout=3, capture_output=True,
+        )
+        _time.sleep(0.1)
+
+        from pynput.keyboard import Key, Controller
+        kb = Controller()
+        kb.press(Key.cmd)
+        kb.press(Key.alt)
+        _time.sleep(0.05)
+        kb.press("y")
+        kb.release("y")
+        _time.sleep(0.05)
+        kb.release(Key.alt)
+        kb.release(Key.cmd)
+
+        # Brief pause so the keystroke lands in FL before we steal focus back.
+        _time.sleep(0.05)
+        if prev_app and prev_app != "OsxFL":
+            _mac_activate_app(prev_app)
+        return True
+    except Exception as e:
+        log.warning("mac keystroke failed: %s", e)
+        return False
 
 
 def send_hotkey_windows() -> bool:

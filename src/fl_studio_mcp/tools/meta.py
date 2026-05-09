@@ -1,10 +1,11 @@
 """Connection + introspection tools for the bridge itself.
 
-Two independent bridges exist:
-  * MIDI bridge — TCP server inside the FL Studio MIDI controller script
-    (requires a MIDI input row with Controller type = 'fLMCP Bridge').
-  * Piano-roll file bridge — works without MIDI, limited to piano-roll
-    operations, via the `ComposeWithLLM.pyscript`.
+Two independent file-buses exist:
+  * Main bridge — `Hardware/fLMCP Bridge/bus/` request+response files,
+    serviced by `device_FLStudioMCP.py` running as a MIDI controller script.
+  * Piano-roll bridge — `Piano roll scripts/fLMCP_request.json`
+    + `fLMCP_state.json`, serviced by `ComposeWithLLM.pyscript`,
+    triggered via Cmd+Opt+Y / Ctrl+Alt+Y.
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ def _midi_status() -> dict:
             "online": False,
             "error": str(e),
             "hint": (
-                "MIDI bridge needs the 'fLMCP Bridge' device script enabled in "
-                "FL Studio: Options > MIDI > Input. This requires a virtual MIDI "
-                "loopback (loopMIDI / LoopBe1). If loopMIDI was just installed, "
-                "a Windows reboot is often required to activate the kernel driver."
+                "Main bridge needs FL Studio running with a MIDI input row using "
+                "Controller type = 'fLMCP Bridge'. On macOS that requires the IAC "
+                "Driver enabled in Audio MIDI Setup so FL Studio sees a port to "
+                "bind the controller script to."
             ),
         }
 
@@ -73,20 +74,21 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def fl_reconnect() -> dict:
-        """Drop and reopen the TCP connection to the MIDI bridge."""
+        """Reset the bridge client (file-bus has no persistent connection,
+        but this clears any client-side state and re-pings)."""
         get_client().close()
         return _midi_status()
 
     @mcp.tool()
     def fl_bridge_info() -> dict:
-        """Detailed info about the MIDI bridge (fails if it's offline)."""
+        """Detailed info about the main bridge (fails if it's offline)."""
         try:
             return get_client().call("meta.info")
         except Exception as e:
             return {"ok": False, "error": str(e),
-                    "hint": "MIDI bridge offline. fl_ping shows piano-roll fallback status."}
+                    "hint": "Main bridge offline. fl_ping shows piano-roll fallback status."}
 
     @mcp.tool()
     def fl_call_raw(action: str, params: dict | None = None) -> dict:
-        """Escape hatch: invoke any action the MIDI bridge accepts with arbitrary params."""
+        """Escape hatch: invoke any action the main bridge accepts with arbitrary params."""
         return get_client().call(action, **(params or {}))

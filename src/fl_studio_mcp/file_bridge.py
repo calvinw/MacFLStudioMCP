@@ -6,7 +6,10 @@ file that the `ComposeWithLLM.pyscript` (piano roll pyscript) picks up when
 it runs. The server triggers the pyscript by synthesising Ctrl+Alt+Y into the
 FL Studio window. The pyscript then writes a state file we read back.
 
-This complements `bridge_client.py` (TCP over MIDI controller script).
+This complements `bridge_client.py` (the main file-bus channel for non-piano-roll
+operations). Piano roll has its own file-bus because `flpianoroll` is sandboxed
+to piano-roll scripts and can only be reached via the Cmd+Opt+Y / Ctrl+Alt+Y
+keystroke trick.
 """
 
 from __future__ import annotations
@@ -87,7 +90,7 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
 
 def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
     """Queue one or more piano-roll actions, fire the hotkey, wait for state."""
-    from .keystroke import send_hotkey_windows
+    from .keystroke import send_hotkey_mac, send_hotkey_windows
 
     if not is_installed():
         return {
@@ -103,7 +106,13 @@ def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
     for a in actions:
         _append_request(a)
 
-    fired = send_hotkey_windows()
+    if sys.platform == "darwin":
+        fired = send_hotkey_mac()
+        manual_hint = "Could not auto-press Cmd+Opt+Y. Grant Accessibility permissions to your terminal/Claude in System Settings → Privacy & Security → Accessibility, then press Cmd+Opt+Y manually."
+    else:
+        fired = send_hotkey_windows()
+        manual_hint = "Could not auto-press Ctrl+Alt+Y. Make sure FL Studio is in the foreground and ComposeWithLLM is the active piano-roll script, then press Ctrl+Alt+Y manually."
+
     state = wait_for_state(wait_sec) if fired else None
 
     return {
@@ -111,10 +120,7 @@ def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
         "hotkey_sent": fired,
         "staged_actions": len(actions),
         "state": state,
-        "note": None if fired else
-            "Could not auto-press Ctrl+Alt+Y. Make sure FL Studio is in the "
-            "foreground and ComposeWithLLM is the active piano-roll script, "
-            "then press Ctrl+Alt+Y manually.",
+        "note": None if fired else manual_hint,
     }
 
 

@@ -1,59 +1,45 @@
 """
-Shared wire protocol for fLMCP <-> FL Studio bridge.
+Shared transport contract for fLMCP <-> FL Studio bridge.
 
-Length-prefixed JSON framing over TCP:
-    [4 bytes big-endian uint32 length][payload = utf-8 JSON]
+The bridge runs inside FL Studio's Python sub-interpreter, which on macOS blocks
+threads, raw sockets, and subprocesses. So we use a plain file bus instead:
 
-Request envelope:
-    {"id": int, "action": str, "params": {..}}
+    bus_dir/req_{id}.json     written by MCP server, consumed by FL OnIdle
+    bus_dir/resp_{id}.json    written by FL OnIdle, consumed by MCP server
+    events.jsonl              one JSON record per line, written by FL, tailed by MCP
 
-Response envelope:
-    {"id": int, "ok": bool, "result": <any>, "error": str|None}
+Atomic writes are achieved with a `.tmp` sibling + os.rename, which is atomic on
+POSIX and Windows (within the same directory).
 
-Server-push notification (no id):
-    {"event": str, "data": <any>}
+Request envelope:    {"id": int, "action": str, "params": {..}}
+Response envelope:   {"id": int, "ok": bool, "result": <any>, "error": str|None}
+Event record:        {"event": str, "data": <any>, "ts": float}
 """
 
 from __future__ import annotations
 
-import json
-import socket
-import struct
-import threading
-import time
+import os
+import sys
 from dataclasses import dataclass
-from typing import Any
-
-HOST = "127.0.0.1"
-PORT = 9876
-HEADER = struct.Struct(">I")
-MAX_FRAME = 16 * 1024 * 1024  # 16 MiB
+from pathlib import Path
 
 
-def pack(obj: Any) -> bytes:
-    body = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    if len(body) > MAX_FRAME:
-        raise ValueError(f"frame too large: {len(body)} bytes")
-    return HEADER.pack(len(body)) + body
+def default_bridge_dir() -> Path:
+    """Return the FL Studio Hardware/fLMCP Bridge directory for this platform."""
+    if sys.platform == "win32":
+        userprofile = os.environ.get("USERPROFILE", str(Path.home()))
+        base = Path(userprofile) / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+    else:
+        base = Path.home() / "Documents" / "Image-Line" / "FL Studio" / "Settings"
+    return base / "Hardware" / "fLMCP Bridge"
 
 
-def recv_exact(sock: socket.socket, n: int) -> bytes:
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            raise ConnectionError("socket closed while reading frame")
-        buf.extend(chunk)
-    return bytes(buf)
+def default_bus_dir() -> Path:
+    return default_bridge_dir() / "bus"
 
 
-def read_frame(sock: socket.socket) -> dict:
-    head = recv_exact(sock, HEADER.size)
-    (length,) = HEADER.unpack(head)
-    if length > MAX_FRAME:
-        raise ValueError(f"frame length out of bounds: {length}")
-    body = recv_exact(sock, length)
-    return json.loads(body.decode("utf-8"))
+def default_events_file() -> Path:
+    return default_bridge_dir() / "events.jsonl"
 
 
 @dataclass

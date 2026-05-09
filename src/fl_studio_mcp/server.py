@@ -17,7 +17,6 @@ from mcp.server.fastmcp import FastMCP
 from .resources import project as r_project
 from .tools import (
     arrangement,
-    audio,
     automation,
     channels,
     generators,
@@ -30,8 +29,25 @@ from .tools import (
     project,
     transport,
     ui,
-    voice,
 )
+
+# Audio + voice tools depend on heavy optional packages (numpy/librosa/sounddevice/
+# dearpygui). Import lazily so the server still starts when those aren't installed.
+try:
+    from .tools import audio  # type: ignore
+except ImportError as _audio_err:
+    audio = None
+    _audio_import_error: Exception | None = _audio_err
+else:
+    _audio_import_error = None
+
+try:
+    from .tools import voice  # type: ignore
+except ImportError as _voice_err:
+    voice = None
+    _voice_import_error: Exception | None = _voice_err
+else:
+    _voice_import_error = None
 
 LOG_LEVEL = os.environ.get("FL_MCP_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -70,8 +86,16 @@ def build_app() -> FastMCP:
     ui.register(mcp)
     piano_roll.register(mcp)
     generators.register(mcp)
-    voice.register(mcp)
-    audio.register(mcp)
+    if voice is not None:
+        voice.register(mcp)
+    else:
+        log.info("voice tools disabled (install fl-studio-mcp[audio] to enable): %s",
+                 _voice_import_error)
+    if audio is not None:
+        audio.register(mcp)
+    else:
+        log.info("audio tools disabled (install fl-studio-mcp[audio] to enable): %s",
+                 _audio_import_error)
 
     # resources
     r_project.register(mcp)

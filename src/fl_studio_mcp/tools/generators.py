@@ -16,8 +16,21 @@ from ..bridge_client import RPCError, get_client
 from ..file_bridge import stage_and_run
 
 
-def _emit_notes_to_piano_roll(notes_bars: list[dict], clear_first: bool = True) -> dict:
-    """Route notes (in bars) to the piano roll via the file bridge (no MIDI)."""
+def _emit_notes_to_piano_roll(notes_bars: list[dict],
+                              clear_first: bool = True,
+                              channel: int | None = None,
+                              pattern: int | None = None) -> dict:
+    """Route notes (in bars) to the piano roll via the file bridge (no MIDI).
+
+    If ``channel`` is given, retarget the piano roll to that channel (and
+    optionally pattern) before staging — otherwise edits land on whichever
+    piano roll is currently focused in FL.
+    """
+    if channel is not None:
+        try:
+            get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern)
+        except RPCError:
+            pass
     actions: list[dict] = []
     if clear_first:
         actions.append({"action": "clear"})
@@ -228,7 +241,8 @@ def register(mcp: FastMCP) -> None:
                 notes.append({"midi": n, "time": t, "duration": chord_length_bars, "velocity": 0.78})
             t += chord_length_bars
 
-        return _emit_notes_to_piano_roll(notes, clear_first=clear_first)
+        return _emit_notes_to_piano_roll(notes, clear_first=clear_first,
+                                         channel=channel, pattern=pattern)
 
     @mcp.tool()
     def gen_emit_melody(channel: int,
@@ -260,7 +274,8 @@ def register(mcp: FastMCP) -> None:
                 "duration": note_duration_bars * rnd.choice([0.8, 1.0, 1.0, 1.2]),
                 "velocity": round(rnd.uniform(0.55, 0.95), 2),
             })
-        return _emit_notes_to_piano_roll(notes, clear_first=clear_first)
+        return _emit_notes_to_piano_roll(notes, clear_first=clear_first,
+                                         channel=channel, pattern=pattern)
 
     @mcp.tool()
     def gen_emit_bassline(channel: int,
@@ -296,7 +311,8 @@ def register(mcp: FastMCP) -> None:
                     notes.append({"midi": r, "time": t + i * bar_length / 8,
                                   "duration": bar_length / 8, "velocity": 0.72 + 0.2 * (i % 2)})
             t += bar_length
-        return _emit_notes_to_piano_roll(notes, clear_first=clear_first)
+        return _emit_notes_to_piano_roll(notes, clear_first=clear_first,
+                                         channel=channel, pattern=pattern)
 
     @mcp.tool()
     def gen_emit_drum_pattern_notes(style: str = "boom_bap",
@@ -410,4 +426,5 @@ def register(mcp: FastMCP) -> None:
                 "velocity": velocity,
             })
 
-        return _emit_notes_to_piano_roll(notes, clear_first=clear_first)
+        return _emit_notes_to_piano_roll(notes, clear_first=clear_first,
+                                         channel=channel, pattern=pattern)

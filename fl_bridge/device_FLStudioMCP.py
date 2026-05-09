@@ -9,36 +9,26 @@ fLMCP Bridge — the FL Studio side of the fl-studio-mcp Model Context Protocol 
 How it works
 ------------
 This script runs inside FL Studio as a "MIDI device" (no real hardware needed — it's
-loaded by configuring a virtual/loopback MIDI port or by any MIDI input that FL can
-see). On OnInit() it starts a TCP server on 127.0.0.1:9876 in a daemon thread that
-receives length-prefixed JSON-RPC requests from the fl-studio-mcp server.
+loaded by configuring any MIDI input row to use this controller type). FL Studio's
+Python sub-interpreter on Mac blocks threads, sockets, and subprocesses, so we use
+plain file I/O for transport: the MCP server drops `req_{id}.json` files into a bus
+directory, and `OnIdle()` (called several times per second on FL's main thread) picks
+them up, executes the requested action via FL's API, and writes `resp_{id}.json` back.
 
-Requests are placed in a thread-safe queue. FL Studio's main thread calls OnIdle()
-several times per second; each OnIdle call drains the queue and executes the pending
-FL API calls on the main thread (FL's Python API is not thread-safe, so we MUST
-execute there), then pushes responses back through the socket.
+Piano-roll edits use a separate file-bus (`fLMCP_request.json` /
+`fLMCP_state.json`) plus a Cmd+Opt+Y / Ctrl+Alt+Y keystroke synthesised from outside
+FL — the only way to reach the sandboxed `flpianoroll` module.
 
-Piano-roll edits are deferred: we stage them into `piano_roll_requests.json` inside
-this script's directory, and the fl-studio-mcp server is responsible for opening the
-piano-roll window and triggering the companion `ComposeWithLLM.pyscript` via
-Ctrl+Alt+Y. After the pyscript runs, it writes `piano_roll_state.json` which the
-MCP server reads back.
-
-Protocol
---------
-Frame: [4-byte big-endian uint32 length][payload = utf-8 JSON]
-Request:      {"id": int, "action": str, "params": {...}}
-Response:     {"id": int, "ok": bool, "result": ..., "error": str|None}
-Notification: {"event": str, "data": ...}   (server push, no id)
+Wire format
+-----------
+Request file (req_{id}.json):  {"id": int, "action": str, "params": {...}}
+Response file (resp_{id}.json): {"id": int, "ok": bool, "result": ..., "error": str|None}
+Events (events.jsonl, one JSON object per line): {"event": str, "data": ..., "ts": float}
 """
 
 import json
 import os
-import queue
-import socket
-import struct
 import sys
-import threading
 import time
 import traceback
 from pathlib import Path
@@ -61,11 +51,8 @@ import ui
 # Configuration
 # ----------------------------------------------------------------------------
 
-BRIDGE_HOST = "127.0.0.1"
-BRIDGE_PORT = 9876
-HEADER = struct.Struct(">I")
-MAX_FRAME = 16 * 1024 * 1024
-BRIDGE_VERSION = "0.1.0"
+BRIDGE_VERSION = "0.2.0-file"
+MAX_REQUESTS_PER_TICK = 32
 
 
 def _script_dir():
@@ -80,6 +67,8 @@ def _script_dir():
 
 
 SCRIPT_DIR = _script_dir()
+BUS_DIR = SCRIPT_DIR / "bus"          # request/response files live here
+EVENTS_FILE = SCRIPT_DIR / "events.jsonl"  # append-only event stream
 PIANO_ROLL_DIR_NAME = "Piano roll scripts"
 PR_REQUEST = Path(SCRIPT_DIR).parent.parent / PIANO_ROLL_DIR_NAME / "fLMCP_request.json"
 PR_STATE = Path(SCRIPT_DIR).parent.parent / PIANO_ROLL_DIR_NAME / "fLMCP_state.json"
@@ -89,14 +78,10 @@ PR_STATE = Path(SCRIPT_DIR).parent.parent / PIANO_ROLL_DIR_NAME / "fLMCP_state.j
 # Global state
 # ----------------------------------------------------------------------------
 
-_inbox: "queue.Queue[tuple[socket.socket, dict]]" = queue.Queue()
-_server_thread = None
-_accept_socket = None
-_client_lock = threading.Lock()
 _started_at = time.monotonic()
 _idle_tick = 0
-_last_refresh_push = 0.0
-_known_clients = set()  # live client sockets for push notifications
+_last_tick_push = 0.0
+_bus_ready = False
 
 
 # ----------------------------------------------------------------------------
@@ -110,30 +95,98 @@ def _log(msg):
         pass
 
 
-def _pack_frame(obj):
-    body = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    if len(body) > MAX_FRAME:
-        raise ValueError("frame too large: %d" % len(body))
-    return HEADER.pack(len(body)) + body
+def _direct_write(path, text):
+    """Write text to path with a single open()+write(). Not atomic — readers may
+    see a partial file briefly, and must retry on JSONDecodeError. We can't use
+    os.rename for atomicity because FL Studio's Mac sub-interpreter audit hook
+    blocks rename and unlink."""
+    with open(str(path), "w", encoding="utf-8") as f:
+        f.write(text)
 
 
-def _recv_exact(sock, n):
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            raise ConnectionError("socket closed")
-        buf.extend(chunk)
-    return bytes(buf)
+def _truncate(path):
+    """Mark a request file as consumed by truncating it to zero bytes.
+    `open(..., 'w')` creates/truncates atomically per POSIX. We use this in
+    place of os.unlink, which the audit hook blocks."""
+    try:
+        with open(str(path), "w") as f:
+            pass
+    except Exception:
+        pass
 
 
-def _read_frame(sock):
-    head = _recv_exact(sock, HEADER.size)
-    (length,) = HEADER.unpack(head)
-    if length > MAX_FRAME:
-        raise ValueError("frame length out of bounds: %d" % length)
-    body = _recv_exact(sock, length)
-    return json.loads(body.decode("utf-8"))
+def _read_request(path):
+    """Read and parse a JSON request file. Returns the dict or None on failure."""
+    try:
+        with open(str(path), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        _log("bad request file %s: %s" % (path, e))
+        return None
+
+
+def _list_requests():
+    """Return request file paths that have non-empty content (i.e. not yet consumed).
+
+    We filter out zero-byte files because `os.unlink` is blocked by FL Studio's
+    audit hook on macOS — once we process a request we truncate its file rather
+    than deleting it, so the directory entry hangs around. The MCP client deletes
+    fully on its side after reading the response.
+    """
+    if not _bus_ready:
+        return []
+    try:
+        all_names = [n for n in os.listdir(str(BUS_DIR))
+                     if n.startswith("req_") and n.endswith(".json")]
+    except Exception as e:
+        _log("listdir failed: %s" % e)
+        return []
+
+    pending = []
+    for n in all_names:
+        full = BUS_DIR / n
+        try:
+            with open(str(full), "rb") as f:
+                if f.read(1):  # at least one byte → not yet consumed
+                    pending.append(full)
+        except Exception:
+            pass
+
+    # sort by numeric id for stable ordering
+    def _key(p):
+        try:
+            return int(p.name[4:-5])
+        except Exception:
+            return 0
+    pending.sort(key=_key)
+    return pending[:MAX_REQUESTS_PER_TICK]
+
+
+def _emit_event(name, data):
+    """Append a one-line event record to events.jsonl. Best-effort, swallows errors."""
+    if not _bus_ready:
+        return
+    try:
+        line = json.dumps({"event": name, "data": data, "ts": time.time()},
+                          separators=(",", ":"), ensure_ascii=False)
+        with open(str(EVENTS_FILE), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as e:
+        _log("event emit failed: %s" % e)
+
+
+def _purge_bus():
+    """At init/reactivation: best-effort truncation of any leftover request files
+    so we don't reprocess them. We can't actually delete them (audit hook) — the
+    MCP client side handles cleanup."""
+    if not BUS_DIR.exists():
+        return
+    try:
+        for n in os.listdir(str(BUS_DIR)):
+            if n.startswith("req_") and n.endswith(".json"):
+                _truncate(BUS_DIR / n)
+    except Exception:
+        pass
 
 
 def _color_to_int(color):
@@ -177,57 +230,6 @@ def _safe(fn, *a, **kw):
         return None
 
 
-# ----------------------------------------------------------------------------
-# Server thread
-# ----------------------------------------------------------------------------
-
-def _serve_client(client):
-    _known_clients.add(client)
-    try:
-        while True:
-            try:
-                req = _read_frame(client)
-            except (ConnectionError, OSError):
-                return
-            except Exception as e:
-                try:
-                    err = {"id": 0, "ok": False, "error": "frame_error: %s" % e}
-                    client.sendall(_pack_frame(err))
-                except Exception:
-                    return
-                return
-            # hand off to the FL main thread via queue
-            _inbox.put((client, req))
-    finally:
-        _known_clients.discard(client)
-        try:
-            client.close()
-        except Exception:
-            pass
-
-
-def _server_loop():
-    global _accept_socket
-    try:
-        _accept_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _accept_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        _accept_socket.bind((BRIDGE_HOST, BRIDGE_PORT))
-        _accept_socket.listen(4)
-        _log("TCP server listening on %s:%d" % (BRIDGE_HOST, BRIDGE_PORT))
-    except Exception as e:
-        _log("failed to bind bridge port: %s" % e)
-        _accept_socket = None
-        return
-
-    while True:
-        try:
-            conn, addr = _accept_socket.accept()
-            conn.settimeout(60.0)
-            t = threading.Thread(target=_serve_client, args=(conn,), daemon=True)
-            t.start()
-        except Exception as e:
-            _log("accept error: %s" % e)
-            time.sleep(0.5)
 
 
 # ----------------------------------------------------------------------------
@@ -261,8 +263,8 @@ def h_meta_info(_):
         "api_modules": ["transport","mixer","channels","patterns","playlist",
                         "plugins","arrangement","ui","general","device","midi"],
         "script_dir": str(SCRIPT_DIR),
-        "tcp_host": BRIDGE_HOST,
-        "tcp_port": BRIDGE_PORT,
+        "bus_dir": str(BUS_DIR),
+        "transport_kind": "file_polling",
     }
 
 
@@ -1319,16 +1321,83 @@ def h_ui_hint(p):
 
 
 def h_ui_open_piano_roll(p):
+    """Open a SPECIFIC channel's piano roll for a SPECIFIC pattern.
+
+    The trick: `ui.showWindow(piano_roll)` opens the piano roll window but
+    doesn't change which channel's notes it loads. To force a re-target we use
+    `ui.openEventEditor(event_id, mode=1, new_window=0|1)` where event_id comes
+    from `channels.getRecEventId(channel)`. mode=1 means piano-roll editor.
+
+    Skip the retarget entirely when the requested channel + pattern already
+    match what the visible piano roll is showing — `openEventEditor` blanks
+    the viewport until the next script run, even when reopening the same
+    score, so doing a no-op retarget would force the user to re-trigger
+    ComposeWithLLM to see their notes again.
+    """
     ch = int(p["channel"])
-    if p.get("pattern") is not None:
-        patterns.jumpToPattern(int(p["pattern"]))
+    requested_pattern = p.get("pattern")
+
+    try:
+        current_pattern = patterns.patternNumber()
+        current_channel = channels.selectedChannel(canBeNone=True, indexGlobal=True)
+        pr_visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
+    except Exception:
+        current_pattern = None
+        current_channel = None
+        pr_visible = False
+
+    pattern_matches = requested_pattern is None or int(requested_pattern) == current_pattern
+    channel_matches = current_channel == ch
+    if pr_visible and pattern_matches and channel_matches:
+        try:
+            event_id = channels.getRecEventId(ch)
+        except Exception:
+            event_id = None
+        return {"ok": True, "channel": ch, "retargeted": False,
+                "event_id": event_id, "no_op": True}
+
+    if requested_pattern is not None:
+        patterns.jumpToPattern(int(requested_pattern))
     channels.selectOneChannel(ch, True)
-    ui.showWindow(_WIN_IDS["piano_roll"])
+
+    # Get the event id that uniquely identifies this channel for the editor API
+    try:
+        event_id = channels.getRecEventId(ch)
+    except Exception as e:
+        # Fallback: just bring up the piano-roll window without re-targeting
+        _log("getRecEventId failed for ch=%d: %s — falling back to showWindow" % (ch, e))
+        ui.showWindow(_WIN_IDS["piano_roll"])
+        try:
+            ui.setFocused(_WIN_IDS["piano_roll"])
+        except Exception:
+            pass
+        return {"ok": True, "channel": ch, "retargeted": False}
+
+    # Reuse the existing piano-roll window when it's visible (new_window=0) —
+    # passing new_window=1 repeatedly creates duplicate "PRForm" components and
+    # eventually crashes FL Studio. Only allocate a fresh window if the piano
+    # roll is hidden.
+    try:
+        visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
+    except Exception:
+        visible = False
+    new_window = 0 if visible else 1
+    # mode=1 = piano-roll editor (vs. event editor)
+    ui.openEventEditor(event_id, 1, new_window)
     try:
         ui.setFocused(_WIN_IDS["piano_roll"])
     except Exception:
         pass
-    return {"ok": True, "channel": ch}
+
+    # Scroll the piano roll back to bar 1 by reseting the playhead. FL's piano
+    # roll follows the playhead, so this gives a consistent view across calls.
+    if p.get("scroll_home", True):
+        try:
+            transport.setSongPos(0, 2)   # 2 = ticks
+        except Exception:
+            pass
+
+    return {"ok": True, "channel": ch, "retargeted": True, "event_id": event_id}
 
 
 def h_ui_selected_channel(_):
@@ -1347,17 +1416,25 @@ def h_ui_scroll_to_channel(p):
 # ---- piano roll (staging only — real edit happens in pyscript via keystroke) ----
 
 def _stage_piano_roll_request(request):
-    PR_REQUEST.parent.mkdir(parents=True, exist_ok=True)
-    existing = []
-    if PR_REQUEST.exists():
-        try:
-            data = json.loads(PR_REQUEST.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                existing = data
-        except Exception:
-            existing = []
-    existing.append(request)
-    PR_REQUEST.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    # FL Studio's Mac sub-interpreter audit hook sandboxes the bridge to its own
+    # subtree (Hardware/fLMCP Bridge/), so we can't write to Piano roll scripts/
+    # from here. The MCP server (which runs outside FL) stages requests directly
+    # via `file_bridge.stage_and_run` — this function only runs on Windows where
+    # the audit hook isn't present.
+    try:
+        existing = []
+        if PR_REQUEST.exists():
+            try:
+                data = json.loads(PR_REQUEST.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    existing = data
+            except Exception:
+                existing = []
+        existing.append(request)
+        PR_REQUEST.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    except Exception as e:
+        # On Mac this will fail silently — the MCP server takes over staging.
+        _log("piano-roll request staging skipped (audit hook): %s" % e)
 
 
 def _prepare_piano_roll(channel, pattern):
@@ -1648,44 +1725,59 @@ _HANDLERS = {
 # ----------------------------------------------------------------------------
 
 def OnInit():
-    global _server_thread
+    global _bus_ready
     _log("initializing — script dir: %s" % SCRIPT_DIR)
     _log("FL version: %s" % _safe(general.getVersion))
-    if _server_thread is None or not _server_thread.is_alive():
-        _server_thread = threading.Thread(target=_server_loop, daemon=True, name="fLMCP-TCP")
-        _server_thread.start()
-    _log("bridge ready on tcp://%s:%d" % (BRIDGE_HOST, BRIDGE_PORT))
+    _log("bridge version: %s (file polling)" % BRIDGE_VERSION)
+    # FL Studio's Mac sub-interpreter audit hook blocks directory creation, so we
+    # rely on `install_mac.sh` (or the MCP server's first call) to create BUS_DIR.
+    # If it's not there yet, we just defer activation; OnIdle re-checks each tick.
+    if BUS_DIR.exists():
+        _bus_ready = True
+        _purge_bus()
+        try:
+            open(str(EVENTS_FILE), "w").close()  # truncate
+        except Exception:
+            pass
+        _log("bus ready: %s" % BUS_DIR)
+    else:
+        _bus_ready = False
+        _log("bus dir not present yet — will activate when it appears: %s" % BUS_DIR)
 
 
 def OnDeInit():
-    global _accept_socket
+    global _bus_ready
     _log("deinit")
-    if _accept_socket is not None:
-        try:
-            _accept_socket.close()
-        except Exception:
-            pass
-        _accept_socket = None
-    # close client connections
-    for c in list(_known_clients):
-        try:
-            c.close()
-        except Exception:
-            pass
-    _known_clients.clear()
+    _bus_ready = False
+    _purge_bus()
 
 
 def OnIdle():
-    """Drain up to N requests per idle tick on the FL main thread."""
-    global _idle_tick, _last_refresh_push
+    """Drain pending request files on FL's main thread; emit periodic events."""
+    global _idle_tick, _last_tick_push, _bus_ready
     _idle_tick += 1
-    drained = 0
-    while drained < 32:
-        try:
-            client, req = _inbox.get_nowait()
-        except queue.Empty:
-            break
-        drained += 1
+
+    # Lazy activation: bus dir may have been created by the MCP server after
+    # FL Studio loaded the bridge. Re-check periodically until it appears.
+    if not _bus_ready:
+        if (_idle_tick % 30) == 0 and BUS_DIR.exists():
+            _bus_ready = True
+            _purge_bus()
+            try:
+                open(str(EVENTS_FILE), "w").close()
+            except Exception:
+                pass
+            _log("bus dir appeared — bus ready: %s" % BUS_DIR)
+        else:
+            return
+
+    for path in _list_requests():
+        req = _read_request(path)
+        # mark consumed (audit hook blocks unlink, so we truncate to 0 bytes)
+        _truncate(path)
+        if req is None:
+            continue
+
         req_id = req.get("id", 0)
         action = req.get("action", "")
         params = req.get("params", {}) or {}
@@ -1694,31 +1786,29 @@ def OnIdle():
             resp = {"id": req_id, "ok": True, "result": result}
         except Exception as e:
             tb = traceback.format_exc(limit=3)
-            resp = {"id": req_id, "ok": False, "error": "%s: %s" % (type(e).__name__, e), "traceback": tb}
+            resp = {"id": req_id, "ok": False,
+                    "error": "%s: %s" % (type(e).__name__, e),
+                    "traceback": tb}
             _log("action %s error: %s" % (action, e))
-        try:
-            client.sendall(_pack_frame(resp))
-        except Exception as e:
-            _log("failed to send response: %s" % e)
 
-    # push transport notifications every ~0.5s when playing
-    now = time.monotonic()
-    if _known_clients and (now - _last_refresh_push) > 0.5:
-        _last_refresh_push = now
         try:
-            snap = h_transport_status({})
-            frame = _pack_frame({"event": "transport.tick", "data": snap})
-            for c in list(_known_clients):
-                try:
-                    c.sendall(frame)
-                except Exception:
-                    _known_clients.discard(c)
+            _direct_write(BUS_DIR / ("resp_%d.json" % req_id),
+                          json.dumps(resp, ensure_ascii=False))
+        except Exception as e:
+            _log("failed to write response for id=%s: %s" % (req_id, e))
+
+    # transport tick at ~2 Hz when playing
+    now = time.monotonic()
+    if (now - _last_tick_push) > 0.5:
+        _last_tick_push = now
+        try:
+            if transport.isPlaying() == 1:
+                _emit_event("transport.tick", h_transport_status({}))
         except Exception:
             pass
 
 
 def OnMidiIn(event):
-    # We don't need MIDI for the primary channel; just ignore.
     event.handled = False
 
 
@@ -1727,25 +1817,14 @@ def OnMidiMsg(event):
 
 
 def OnRefresh(flags):
-    # push a refresh event to connected clients (so MCP server can invalidate cache)
     try:
-        frame = _pack_frame({"event": "refresh", "data": {"flags": int(flags)}})
-        for c in list(_known_clients):
-            try:
-                c.sendall(frame)
-            except Exception:
-                _known_clients.discard(c)
+        _emit_event("refresh", {"flags": int(flags)})
     except Exception:
         pass
 
 
 def OnProjectLoad(status):
     try:
-        frame = _pack_frame({"event": "projectLoad", "data": {"status": status}})
-        for c in list(_known_clients):
-            try:
-                c.sendall(frame)
-            except Exception:
-                _known_clients.discard(c)
+        _emit_event("projectLoad", {"status": status})
     except Exception:
         pass

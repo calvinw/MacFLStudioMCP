@@ -1370,9 +1370,12 @@ def h_ui_open_piano_roll(p):
         patterns.jumpToPattern(int(requested_pattern))
     channels.selectOneChannel(ch, True)
 
-    # Get the event id that uniquely identifies this channel for the editor API
+    # Get the event id that uniquely identifies this channel for the editor API.
+    # FL's docs specify adding REC_Chan_PianoRoll to the channel event id when
+    # opening a piano roll: ui.openEventEditor(channels.getRecEventId(ch) +
+    # midi.REC_Chan_PianoRoll, midi.EE_PR, newWindow).
     try:
-        event_id = channels.getRecEventId(ch)
+        event_id = channels.getRecEventId(ch) + getattr(midi, "REC_Chan_PianoRoll", 0)
     except Exception as e:
         # Fallback: just bring up the piano-roll window without re-targeting
         _log("getRecEventId failed for ch=%d: %s — falling back to showWindow" % (ch, e))
@@ -1392,8 +1395,7 @@ def h_ui_open_piano_roll(p):
     except Exception:
         visible = False
     new_window = 0 if visible else 1
-    # mode=1 = piano-roll editor (vs. event editor)
-    ui.openEventEditor(event_id, 1, new_window)
+    ui.openEventEditor(event_id, getattr(midi, "EE_PR", 1), new_window)
     try:
         ui.setFocused(_WIN_IDS["piano_roll"])
     except Exception:

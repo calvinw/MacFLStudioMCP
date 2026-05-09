@@ -8,7 +8,6 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from ..bridge_client import get_client
-from ..file_bridge import is_installed, stage_and_run
 
 
 WindowName = Literal["mixer", "channel_rack", "playlist", "piano_roll", "browser", "plugin"]
@@ -39,22 +38,18 @@ def register(mcp: FastMCP) -> None:
     def ui_open_piano_roll_for_channel(channel: int, pattern: int | None = None) -> dict:
         """Open the piano roll for a given channel (optionally switch pattern first).
 
-        After retargeting, waits for the piano roll to settle then fires a
-        no-op script run to re-bind ComposeWithLLM as the active script and
-        redraw the viewport. This ensures subsequent piano_roll_add_notes calls
-        work correctly without requiring a manual ComposeWithLLM click.
+        Waits briefly after retargeting so FL's piano roll finishes initialising
+        before the next Cmd+Opt+Y keystroke (from piano_roll_add_notes) arrives.
+        Script binding persists across channel/pattern switches so no separate
+        warmup call is needed.
         """
         result = get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern)
-        if result.get("retargeted") and is_installed():
-            # Give the piano roll time to finish initialising before triggering
-            # the script — without this delay the keystroke lands too early and
-            # FL Studio ignores it, leaving ComposeWithLLM unbound.
-            time.sleep(1.0)
-            refresh = stage_and_run([{"action": "export_only"}])
-            result["viewport_refresh"] = {
-                "ok": refresh.get("ok"),
-                "hotkey_sent": refresh.get("hotkey_sent"),
-            }
+        if result.get("retargeted"):
+            # Brief settle: give FL's piano roll time to finish initialising so
+            # the next Cmd+Opt+Y keystroke (from piano_roll_add_notes) isn't
+            # dropped. Script binding persists across channel/pattern switches so
+            # we don't need a separate export_only warmup call any more.
+            time.sleep(0.2)
         return result
 
     @mcp.tool()

@@ -71,9 +71,17 @@ def clear_request_queue() -> None:
 
 
 def clear_state() -> None:
+    """Reset the state file to a JSON null sentinel so wait_for_state keeps
+    polling without needing to delete+recreate the file.
+
+    We write 'null' rather than unlinking because:
+      - _read_json returns Python None for JSON null → wait_for_state loops
+      - The pyscript only needs to *write* to the file, not *create* it
+      - On Mac, FL's pyscript sandbox may not be able to create new files
+        (audit-hook restriction); keeping the file alive avoids that risk
+    """
     try:
-        if STATE_FILE.exists():
-            STATE_FILE.unlink()
+        STATE_FILE.write_text("null", encoding="utf-8")
     except Exception:
         pass
 
@@ -86,6 +94,20 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
             return data
         time.sleep(0.01)
     return None
+
+
+def _focus_piano_roll() -> None:
+    """Tell the FL bridge to raise the piano roll window before we send the hotkey.
+
+    Without this, Cmd+Opt+Y may land on the channel rack or another FL window
+    and never reach the ComposeWithLLM script.
+    """
+    try:
+        from .bridge_client import get_client
+        get_client().call("ui.showWindow", name="piano_roll", focus=True)
+        time.sleep(0.1)   # let FL finish raising the window
+    except Exception:
+        pass  # bridge offline — keystroke goes to whatever is focused
 
 
 def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
@@ -104,6 +126,11 @@ def stage_and_run(actions: list[dict], wait_sec: float = 3.0) -> dict:
 
     clear_state()
     _write_json(REQUEST_FILE, actions)
+
+    # Raise the piano roll window inside FL before sending the hotkey so the
+    # keystroke is guaranteed to reach the ComposeWithLLM script rather than
+    # landing on the channel rack or mixer.
+    _focus_piano_roll()
 
     if sys.platform == "darwin":
         fired = send_hotkey_mac()

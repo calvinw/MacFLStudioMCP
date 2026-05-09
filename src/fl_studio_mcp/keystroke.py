@@ -2,7 +2,7 @@
 companion piano-roll pyscript.
 
 Windows: Win32 SendInput.
-macOS:   osascript to focus OsxFL + pynput to send the keystroke.
+macOS:   osascript to focus FL Studio + pynput to send the keystroke.
 Other:   no-op; user must press the hotkey manually.
 """
 
@@ -55,53 +55,19 @@ def wait_for_state(deadline_sec: float = 3.0) -> dict | None:
     return None
 
 
-def _mac_frontmost_app() -> str | None:
-    """Return the name of the frontmost macOS application, or None on failure."""
-    if sys.platform != "darwin":
-        return None
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["osascript", "-e",
-             'tell application "System Events" to '
-             'name of first application process whose frontmost is true'],
-            timeout=2, capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            name = result.stdout.strip()
-            return name or None
-    except Exception:
-        pass
-    return None
-
-
-def _mac_activate_app(name: str) -> None:
-    if sys.platform != "darwin" or not name:
-        return
-    try:
-        import subprocess
-        subprocess.run(
-            ["osascript", "-e", f'tell application "{name}" to activate'],
-            timeout=2, capture_output=True,
-        )
-    except Exception:
-        pass
-
-
 _FL_FRONTMOST_UNTIL = 0.0  # monotonic timestamp through which we trust FL is frontmost
+_kb_controller = None       # cached pynput Controller (init is slow; reuse it)
 
 
 def send_hotkey_mac() -> bool:
     """Focus FL Studio if needed, send Cmd+Opt+Y. Leaves FL focused on exit.
 
-    Skips the "activate FL" osascript if FL is already frontmost (chains naturally
-    after the first call). Caches that-FL-is-frontmost for 5 seconds after each call
-    to skip the frontmost-check osascript on rapid chains. Does NOT restore prior
-    app focus.
+    On cold start: one osascript `activate` call (~150-250ms) + pynput keystroke.
+    On warm calls within 5s: skip osascript entirely — just pynput (~40ms total).
 
     Returns True on success.
     """
-    global _FL_FRONTMOST_UNTIL
+    global _FL_FRONTMOST_UNTIL, _kb_controller
     if sys.platform != "darwin":
         return False
     try:
@@ -109,22 +75,38 @@ def send_hotkey_mac() -> bool:
         import time as _time
 
         now = _time.monotonic()
-        # Skip the frontmost check if we recently sent a keystroke (FL still focused).
-        fl_known_frontmost = now < _FL_FRONTMOST_UNTIL
-        if not fl_known_frontmost and _mac_frontmost_app() != "OsxFL":
+        if now >= _FL_FRONTMOST_UNTIL:
+            # Single osascript call: activate FL (no-op if already frontmost).
             subprocess.run(
-                ["osascript", "-e",
-                 'tell application "System Events"\n'
-                 '    if exists process "OsxFL" then\n'
-                 '        tell process "OsxFL" to set frontmost to true\n'
-                 '    end if\n'
-                 'end tell'],
+                ["osascript", "-e", 'tell application "FL Studio 2025" to activate'],
                 timeout=3, capture_output=True,
             )
-            _time.sleep(0.05)
+            _time.sleep(0.02)
 
-        from pynput.keyboard import Key, Controller
-        kb = Controller()
+        # Prefer System Events on macOS: FL's menu shortcut handling has proven
+        # more reliable with a native AppleScript keystroke than pynput events.
+        script = (
+            'tell application "FL Studio 2025" to activate\n'
+            'delay 0.05\n'
+            'tell application "System Events"\n'
+            '  keystroke "y" using {command down, option down}\n'
+            'end tell\n'
+        )
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            timeout=3, capture_output=True,
+        )
+        if result.returncode == 0:
+            _FL_FRONTMOST_UNTIL = _time.monotonic() + 5.0
+            return True
+
+        if _kb_controller is None:
+            from pynput.keyboard import Key, Controller
+            _kb_controller = Controller()
+            _kb_controller._Key = Key  # stash Key on the instance for reuse
+
+        kb = _kb_controller
+        Key = kb._Key
         kb.press(Key.cmd)
         kb.press(Key.alt)
         _time.sleep(0.02)

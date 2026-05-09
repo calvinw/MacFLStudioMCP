@@ -154,12 +154,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def piano_roll_read_patterns_autolocate(patterns_to_read: list[int] | None = None,
-                                           restore_start: bool = False) -> dict:
+                                           restore_start: bool = False,
+                                           navigate_after_pattern: int | None = None,
+                                           navigate_after_channel: int | None = None) -> dict:
         """Read notes across patterns using FL's auto-located piano-roll channel.
 
         This avoids explicit channel retargeting/openEventEditor. It changes only
         the selected pattern, triggers ComposeWithLLM, and records the selected
         channel FL reports after each pattern switch.
+
+        After the sweep, if navigate_after_pattern is provided, FL is left on that
+        pattern (and optionally channel) so the UI is already showing the edit target
+        while the LLM plans its changes. Use this whenever you know ahead of time
+        which pattern will be edited first.
         """
         c = get_client()
         start_pattern = c.call("patterns.current")
@@ -203,6 +210,12 @@ def register(mcp: FastMCP) -> None:
                 "channel": start_channel.get("channel"),
                 "ok": bool(restore_result.get("ok")),
             }
+        elif navigate_after_pattern is not None:
+            # Navigate to the first edit target so FL shows it while LLM plans
+            c.call("patterns.select", index=navigate_after_pattern)
+            if navigate_after_channel is not None:
+                c.call("channels.select", index=navigate_after_channel)
+            time.sleep(0.2)
 
         return {
             "start_pattern": start_pattern,

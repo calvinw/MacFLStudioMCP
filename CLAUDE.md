@@ -183,6 +183,7 @@ tests/
 **Always follow this sequence. Do not skip steps.**
 
 1. **Full sweep read first** — `piano_roll_read_patterns_autolocate()` (all patterns, no args) before any edit session, even if you think you know the state. This is mandatory at the start of every edit session.
+   - If you already know which pattern will be edited first, pass `navigate_after_pattern=<index>` (and `navigate_after_channel=<index>` if known). FL will land on the edit target immediately after the sweep, so the UI shows the right pattern while you plan.
 2. **Plan** — derive notes from the read data. Never invent from memory or a previous session.
 3. **Write with `piano_roll_write_patterns`** (plural) — pass all writes as a single list. Do **not** call `piano_roll_write_pattern` (singular) in a loop — it fires a separate Cmd+Opt+Y per write.
 4. **FL stays on last edited pattern/channel** — `restore_start` defaults to `False` on all read and write tools. Do not pass `restore_start=True` unless there is a specific reason to jump back.

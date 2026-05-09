@@ -19,7 +19,7 @@ from .tools import (
     arrangement,
     automation,
     channels,
-    generators,
+    # generators,  # disabled: LLM can compute music theory and emit notes directly
     meta,
     mixer,
     patterns,
@@ -63,12 +63,11 @@ def build_app() -> FastMCP:
     mcp = FastMCP(
         "fl-studio-mcp",
         instructions=(
-            "MCP server for FL Studio. Exposes full control: transport, patterns, channels, "
-            "mixer, plugins, piano roll, playlist, arrangement, automation, rendering, high-level "
-            "music generators (chord progressions, basslines, drum grooves). Requires the fLMCP "
-            "bridge script installed in FL Studio (see scripts/install_windows.ps1). If calls fail "
-            "with 'bridge unavailable', ask the user to ensure FL Studio is running and the "
-            "bridge MIDI device is enabled under Options > MIDI > Input."
+            "MCP server for FL Studio on macOS. Exposes full control: transport, patterns, channels, "
+            "mixer, plugins, piano roll, playlist, arrangement, automation, and rendering. "
+            "Requires the fLMCP bridge script installed in FL Studio (see install_mac.sh). If calls "
+            "fail with 'bridge unavailable', ensure FL Studio is running and the fLMCP Bridge MIDI "
+            "device is enabled under Options > MIDI Settings > Input with an IAC Driver port."
         ),
     )
 
@@ -85,7 +84,7 @@ def build_app() -> FastMCP:
     project.register(mcp)
     ui.register(mcp)
     piano_roll.register(mcp)
-    generators.register(mcp)
+    # generators.register(mcp)  # disabled: LLM computes music theory natively
     if voice is not None:
         voice.register(mcp)
     else:

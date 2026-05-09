@@ -154,7 +154,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def piano_roll_read_patterns_autolocate(patterns_to_read: list[int] | None = None,
-                                           restore_start: bool = True) -> dict:
+                                           restore_start: bool = False) -> dict:
         """Read notes across patterns using FL's auto-located piano-roll channel.
 
         This avoids explicit channel retargeting/openEventEditor. It changes only
@@ -218,7 +218,7 @@ def register(mcp: FastMCP) -> None:
         pattern: int,
         notes: list[PianoRollNote],
         clear_first: bool = True,
-        restore_start: bool = True,
+        restore_start: bool = False,
     ) -> dict:
         """Write notes to a specific channel × pattern using autolocate-style switching.
 
@@ -232,7 +232,7 @@ def register(mcp: FastMCP) -> None:
             pattern: Pattern index (1-based, as returned by patterns.list).
             notes: List of notes with midi, time_bars, duration_bars, velocity.
             clear_first: Clear the pattern before writing (default True).
-            restore_start: Restore the original pattern/channel when done (default True).
+            restore_start: Restore the original pattern/channel when done (default False — stays on last edited).
 
         Returns:
             {ok, note_count, hotkey_sent, restored}
@@ -297,7 +297,7 @@ def register(mcp: FastMCP) -> None:
     def piano_roll_write_patterns(
         writes: list[dict],
         clear_first: bool = True,
-        restore_start: bool = True,
+        restore_start: bool = False,
     ) -> dict:
         """Write notes to multiple channel × pattern pairs sequentially, restoring only at the end.
 
@@ -308,7 +308,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             writes: List of {channel: int, pattern: int, notes: [{midi, time_bars, duration_bars, velocity}]}.
             clear_first: Clear each pattern before writing (default True).
-            restore_start: Restore the original pattern/channel after all writes (default True).
+            restore_start: Restore the original pattern/channel after all writes (default False — stays on last edited).
 
         Returns:
             {results: [{channel, pattern, ok, note_count, hotkey_sent}], restored}

@@ -6,7 +6,7 @@ def test_build_app():
     from fl_studio_mcp.server import build_app
     app = build_app()
     tools = app._tool_manager.list_tools()
-    assert len(tools) >= 130, f"expected >= 130 tools, got {len(tools)}"
+    assert len(tools) >= 100, f"expected >= 100 tools, got {len(tools)}"
     names = {t.name for t in tools}
     # Spot-check coverage across every module
     for required in [
@@ -17,17 +17,24 @@ def test_build_app():
         "mixer_set_volume", "mixer_set_eq_band", "mixer_route",
         "plugin_find_param", "plugin_list_mixer_track",
         "piano_roll_add_notes", "piano_roll_add_arpeggio", "piano_roll_humanize",
+        "piano_roll_write_pattern", "piano_roll_write_patterns",
+        "piano_roll_read_patterns_autolocate",
         "playlist_add_marker",
         "arrangement_select",
         "automation_record_tempo", "automation_record_plugin_param",
         "project_save", "project_undo", "project_render",
         "ui_show_window", "ui_hint",
-        "gen_emit_chord_progression",
-        "gen_emit_drum_pattern_notes", "gen_emit_drum_pattern_step_seq",
-        "gen_emit_bassline", "gen_emit_melody", "gen_emit_arpeggio",
         "piano_roll_status",
     ]:
         assert required in names, f"missing tool: {required}"
+    # Generators are intentionally disabled
+    for absent in [
+        "gen_emit_chord_progression", "gen_emit_drum_pattern_notes",
+        "gen_emit_drum_pattern_step_seq", "gen_emit_bassline",
+        "gen_emit_melody", "gen_emit_arpeggio",
+    ]:
+        assert absent not in names, f"generator tool should be disabled: {absent}"
+
 
 
 def test_resources_registered():

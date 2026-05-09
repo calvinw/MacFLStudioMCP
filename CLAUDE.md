@@ -1,34 +1,65 @@
 # Project context for Claude
 
-This file gives any future Claude session enough context to be useful immediately. **Read this first** before exploring the codebase.
+This file gives any future Claude session enough context to be useful immediately.
+**Read this entire file before touching any code or making any tool calls.**
+
+---
+
+## Cold-start checklist (read this first every session)
+
+1. This is a macOS FL Studio MCP server. The remote is `https://github.com/calvinw/FLStudioMCP.git` (already configured).
+2. Everything is committed and pushed. Start by running `git status` to see if there are any uncommitted local changes.
+3. **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
+4. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
+5. **Piano roll workflow is mandatory** — read → plan → write (plural) → confirm. See the dedicated section below.
+6. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
+
+---
 
 ## What this project is
 
-This is **`/Users/calvinw/develop/FLStudioMCP`** — a fork-in-progress of `geezoria/FLStudioMCP` that's being adapted to **work on macOS**. The upstream repo is Windows-only because FL Studio 2025 on Mac runs Python in a deeply-restricted sub-interpreter that blocks the upstream TCP-based architecture entirely.
+macOS port of [geezoria/FLStudioMCP](https://github.com/geezoria/FLStudioMCP). The upstream is Windows-only; FL Studio 2025 on macOS runs Python in a heavily-restricted sub-interpreter that blocks the upstream TCP architecture entirely. This fork replaces TCP with a file-bus that works within those constraints.
 
-The git remote still points at upstream (`https://github.com/geezoria/FLStudioMCP.git`). The user (Calvin Williamson, calvin.e.williamson@gmail.com) plans to fork properly on GitHub when ready. **All current work is in the local clone, uncommitted.**
+Calvin Williamson (calvin.e.williamson@gmail.com) maintains this repo. There is also a separate simpler Mac-native MCP server at `calvinw/fl-studio-mcp` (MIDI/SysEx, ~13 tools) — this fork exists to get the full 160+ tool surface working on Mac.
 
-The user also maintains a separate, simpler Mac-native MCP server: `calvinw/fl-studio-mcp` (dev branch, MIDI/SysEx based, ~13 tools). The motivation for this fork is to get FLStudioMCP's 160+ tools working on Mac without the rewrite that re-implementing everything in the other repo would require.
+## Current state
 
-## Current state — what works
+All core functionality is working and committed:
 
-End-to-end testing passed through Step 4 of a manual test plan:
-
-| Step | Tested | Status |
+| Step | What | Status |
 |---|---|---|
-| 1 | File-bus round-trip (smoke test) | ✅ ~25-50ms latency |
-| 2 | Transport, patterns, tempo, channels via REPL | ✅ all visible in FL |
-| 3 | Iterate patterns + open each in piano roll | ✅ |
-| 4 | Piano roll edit (clear/add/transpose/clear via Cmd+Opt+Y) | ✅ |
-| 5 | Through Claude Code MCP | ✅ multi-channel edit + end-of-edit cycle verified |
+| 1 | File-bus round-trip | ✅ ~25-50ms latency |
+| 2 | Transport, patterns, tempo, channels | ✅ |
+| 3 | Pattern iteration + piano roll open | ✅ |
+| 4 | Piano roll edit via Cmd+Opt+Y | ✅ |
+| 5 | Full Claude Code MCP session | ✅ multi-channel edit confirmed |
 
 The MCP server is registered with Claude Code (`claude mcp list` shows `fl-studio-mcp ✓ Connected`).
 
-Heavy optional deps (numpy/librosa/sounddevice/dearpygui) are **not** installed. Voice and audio tool modules are loaded conditionally — the server starts fine without them and just logs `voice tools disabled`/`audio tools disabled`.
+Heavy optional deps (numpy/librosa/sounddevice/dearpygui) are **not** installed — voice and audio tools load conditionally; the server starts fine without them.
 
-## The Mac problem (most important context)
+## Intentional decisions — do not undo
 
-FL Studio 2025 on Mac runs Python 3.12 inside a **sub-interpreter with aggressive audit-hook restrictions**. Capability probe results (run from inside the controller script):
+### Generator tools are disabled
+
+`generators.register(mcp)` is commented out in `server.py`. All `gen_*` tools
+(scales, chords, progressions, arpeggios, basslines, drum patterns, melodies)
+are removed from the MCP tool list.
+
+**Reason:** The LLM can compute all music theory natively. These tools were
+redundant wrappers around hardcoded templates. The correct workflow is:
+- LLM reasons about MIDI note numbers directly
+- Writes notes with `piano_roll_write_patterns`
+- Uses `channel_set_step_sequence` for drum step patterns
+
+To re-enable generators: uncomment `# generators,` in the imports and
+`# generators.register(mcp)` in `build_app()` in `src/fl_studio_mcp/server.py`.
+
+---
+
+## The Mac problem (why everything is files)
+
+FL Studio 2025 on macOS runs Python 3.12 inside a **sub-interpreter with aggressive audit-hook restrictions**:
 
 ```
 threads:    FAIL — start_new_thread returned NULL
@@ -40,237 +71,187 @@ unlink:     FAIL — audit hook blocks
 rename:     FAIL — audit hook blocks
 listdir:    OK
 open()/read/write to existing files: OK
-print(): OK
 ```
 
-The audit hook also appears to **sandbox each script to its own subtree**:
-- `device_FLStudioMCP.py` lives in `Hardware/fLMCP Bridge/` and can write to `Hardware/fLMCP Bridge/bus/` ✓
-- It cannot write to `Settings/Piano roll scripts/` ✗
-- The piano-roll script (`ComposeWithLLM.pyscript`) lives in `Piano roll scripts/` and CAN write there ✓
+The audit hook also **sandboxes each script to its own subtree**:
+- `device_FLStudioMCP.py` lives in `Hardware/fLMCP Bridge/` — can write to `bus/` ✓, cannot write to `Piano roll scripts/` ✗
+- `ComposeWithLLM.pyscript` lives in `Piano roll scripts/` — can write there ✓
 
-This shaped every architecture decision below.
+There is currently no known way to open a socket inside FL Studio's Python interpreter on macOS. If a future FL update lifts these restrictions the server can switch back to TCP with minimal changes.
 
-## Architecture (Mac-adapted)
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Claude Code / claude.ai (any MCP host)                       │
+│ Claude Code / any MCP host                                   │
 └──────────────────────┬──────────────────────────────────────┘
                        │ stdio (MCP protocol)
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ fl-studio-mcp Python server  (.venv/bin/python -m fl_studio_mcp)│
-│   • bridge_client.BridgeClient — file-bus client             │
-│   • file_bridge — piano-roll file bus + Cmd+Opt+Y trigger    │
-│   • keystroke.send_hotkey_mac — osascript + pynput            │
+│ fl-studio-mcp  (.venv/bin/python -m fl_studio_mcp)          │
+│   • BridgeClient  — file-bus RPC client                     │
+│   • file_bridge   — piano-roll bus + Cmd+Opt+Y trigger      │
+│   • keystroke     — osascript focus + pynput keystroke      │
 └──────────────────────┬──────────────────────────────────────┘
-                       │ files only (NO TCP, NO MIDI for data)
+                       │ plain files only (no TCP, no MIDI data)
                        ▼
-       ~/Documents/Image-Line/FL Studio/Settings/
-       ├─ Hardware/fLMCP Bridge/
-       │   ├─ device_FLStudioMCP.py      ← runs in FL's MIDI controller sub-interpreter
-       │   ├─ events.jsonl                ← FL writes events here (truncated at OnInit)
-       │   └─ bus/
-       │       ├─ req_{id}.json           ← MCP writes (atomic via os.rename)
-       │       └─ resp_{id}.json          ← FL writes (direct, non-atomic)
-       └─ Piano roll scripts/
-           ├─ ComposeWithLLM.pyscript     ← runs in FL's piano-roll sub-interpreter
-           ├─ fLMCP_request.json          ← MCP writes (FL controller can't reach here!)
-           └─ fLMCP_state.json            ← pyscript writes when triggered
-                                           (must be pre-created by install_mac.sh —
-                                            FL can't create new files in this dir)
+  ~/Documents/Image-Line/FL Studio/Settings/
+  ├─ Hardware/fLMCP Bridge/
+  │   ├─ device_FLStudioMCP.py      ← MIDI controller (runs inside FL)
+  │   └─ bus/
+  │       ├─ req_{id}.json           ← MCP writes (atomic tmp+rename)
+  │       └─ resp_{id}.json          ← FL writes (direct open/write)
+  └─ Piano roll scripts/
+      ├─ ComposeWithLLM.pyscript     ← piano-roll script (runs inside FL)
+      ├─ fLMCP_request.json          ← staged piano-roll actions (pre-created stub)
+      └─ fLMCP_state.json            ← result written by pyscript (pre-created stub)
 ```
 
-### Two file buses, not one
+### Two file buses
 
-1. **Main bus** (`Hardware/fLMCP Bridge/bus/`) — used by 150+ tools. The MIDI controller script services it in `OnIdle()`.
-2. **Piano-roll bus** (`Piano roll scripts/fLMCP_*.json`) — used only for piano-roll edits (because the `flpianoroll` API is sandboxed to piano-roll scripts). Triggered by synthesizing `Cmd+Opt+Y` from outside FL via `osascript` (focus FL) + `pynput` (keystroke).
+1. **Main bus** (`bus/`) — 150+ tools. Controller script polls in `OnIdle()`.
+2. **Piano-roll bus** (`fLMCP_*.json`) — piano-roll edits only. Triggered by `Cmd+Opt+Y` via osascript + pynput.
 
 ### File operations — what runs where
 
 | Operation | Inside FL bridge | Outside FL (MCP server) |
 |---|---|---|
-| `open()` for read | ✓ | ✓ |
-| `open()` for write to **existing** file in own subtree | ✓ | ✓ |
-| `open()` to **create new** file | only inside own subtree | ✓ anywhere |
+| `open()` read | ✓ | ✓ |
+| `open()` write to existing file in own subtree | ✓ | ✓ |
+| `open()` create new file | own subtree only | ✓ anywhere |
 | `os.listdir` | ✓ | ✓ |
 | `os.rename` | ✗ blocked | ✓ |
 | `os.unlink` | ✗ blocked | ✓ |
 | `os.mkdir` | ✗ blocked | ✓ |
-| atomic write via `tmp + rename` | ✗ | ✓ |
+| atomic write via tmp+rename | ✗ | ✓ |
 
-**Implications:**
-- The MCP server uses atomic `tmp + rename` to write request files (so FL never sees partial JSON).
-- FL writes responses directly with `open()/write()` — non-atomic. The client tolerates JSONDecodeError briefly and retries.
-- FL never deletes or renames files. It "consumes" a request by truncating the file to 0 bytes via `open(path, "w")`. The MCP client unlinks both files after reading the response.
-- All directories must be created from outside FL (`install_mac.sh`).
-- All files that FL needs to write to in `Piano roll scripts/` (which is outside its own subtree) must be **pre-created** as empty stubs by `install_mac.sh`.
+**Key implications:**
+- MCP server uses atomic `tmp + rename` for requests (FL never sees partial JSON).
+- FL writes responses directly — non-atomic. Client retries on JSONDecodeError.
+- FL "consumes" requests by truncating to 0 bytes via `open(path, "w")`. MCP client unlinks both files after reading.
+- All dirs must be created from outside FL (`install_mac.sh`). All files FL writes to in `Piano roll scripts/` must be pre-created as stubs.
 
-## Setup requirements (the full Mac install dance)
+## Setup (already done — for reference only)
 
-The user has all of this already configured. For reference:
-
-1. **IAC Driver port** — Audio MIDI Setup → MIDI Studio → IAC Driver → enable, add port named `fLMCP`. (Just `Bus 1` renamed; only one port needed.)
-2. **FL Studio MIDI Settings → Input** — find the `fLMCP` IAC row (NOT a blank row). Set Controller type = `fLMCP Bridge`, Port = 1, Enable.
-3. **FL Studio MIDI Settings → Output** — same `fLMCP` row, Port = 1.
-4. **Critical:** OnIdle does not fire unless an input row is bound to a real (or virtual) MIDI port. With both Input + Output assigned to Port 1, the controller becomes "active" and FL fires its callbacks.
-5. **Run `./install_mac.sh`** to copy bridge files and create the bus dir + pre-created stub files in Piano roll scripts/.
-6. **Accessibility permission** — System Settings → Privacy & Security → Accessibility → enable for whatever terminal app launches Claude Code (and Claude Code itself). Required for `pynput` to send `Cmd+Opt+Y`.
-7. **First-run bind** — In FL Studio, open any piano roll → click the scripts dropdown (top-right of piano roll) → click `ComposeWithLLM` once. This binds `Cmd+Opt+Y` to that script for the rest of the session. FL forgets this on quit and re-quit, but persists across pattern/channel switches.
-8. **MCP registration** — `claude mcp add --transport stdio fl-studio-mcp -- /Users/calvinw/develop/FLStudioMCP/.venv/bin/python -m fl_studio_mcp` (already done; lives in `~/.claude.json`).
+1. **IAC Driver** — Audio MIDI Setup → MIDI Studio → IAC Driver → enable → port named `fLMCP`.
+2. **FL MIDI Input** — `fLMCP` row, Controller type = `fLMCP Bridge`, Port = 1, Enable.
+3. **FL MIDI Output** — same row, Port = 1. *(Both required — OnIdle only fires on active controllers.)*
+4. **`./install_mac.sh`** — copies bridge files, creates `bus/`, pre-creates stub files.
+5. **Accessibility permission** — System Settings → Privacy & Security → Accessibility → terminal app + Claude Code. Required for `pynput`.
+6. **First-run bind** — open any piano roll → scripts dropdown → click `ComposeWithLLM`. Repeat each FL relaunch.
+7. **MCP registered** — `claude mcp add --transport stdio fl-studio-mcp -- /Users/calvinw/develop/FLStudioMCP/.venv/bin/python -m fl_studio_mcp` (in `~/.claude.json`).
 
 ## Files of interest
 
 ```
 fl_bridge/
-├── device_FLStudioMCP.py          # the MIDI controller script — file-bus server
+├── device_FLStudioMCP.py       # MIDI controller script — file-bus server (runs inside FL)
 └── piano_roll/
-    ├── ComposeWithLLM.pyscript    # runs in piano-roll sandbox; processes piano-roll requests
-    └── fLMCP_bridge.pyscript      # legacy variant, also installed
+    ├── ComposeWithLLM.pyscript # piano-roll script — handles add_notes/clear/export_only
+    └── fLMCP_bridge.pyscript   # legacy variant, also installed
 
 src/fl_studio_mcp/
-├── bridge_client.py               # file-bus client (replaces TCP socket client)
-├── file_bridge.py                 # piano-roll file-bus + stage_and_run()
-├── keystroke.py                   # send_hotkey_mac() + send_hotkey_windows()
-├── protocol.py                    # path helpers (default_bus_dir etc) + RPCError
-├── server.py                      # FastMCP entry; conditional import for audio/voice
-└── tools/                         # 160+ MCP tools, mostly unchanged
+├── bridge_client.py            # file-bus RPC client
+├── file_bridge.py              # piano-roll bus + stage_and_run()
+├── keystroke.py                # send_hotkey_mac() — osascript focus + pynput Cmd+Opt+Y
+├── protocol.py                 # path helpers + RPCError
+├── server.py                   # FastMCP entry; generators disabled here
+└── tools/
+    ├── piano_roll.py           # primary piano roll tools incl. write_pattern(s)
+    ├── generators.py           # DISABLED — kept for reference / possible re-enable
+    └── ...                     # transport, channels, mixer, patterns, etc.
 
 scripts/
-├── install_windows.ps1            # original Windows installer (untouched)
-├── smoke_test_mac.py              # Step 1 — basic round-trip
-├── test_step2_interactive.py      # Step 2 — transport/patterns/tempo
-├── test_step3_iterate_patterns.py # Step 3 — pattern iteration workflow
-├── test_step4_piano_roll.py       # Step 4 — piano roll edit cycle
-├── test_retarget.py               # tests ui.openPianoRoll channel retargeting
-└── test_read_all_notes.py         # reads main pattern notes using pattern switching/autolocate
+├── smoke_test_mac.py           # Step 1 — basic round-trip test
+├── test_step2_interactive.py   # Step 2 — transport/patterns/tempo
+├── test_step3_iterate_patterns.py
+├── test_step4_piano_roll.py    # Step 4 — piano roll edit cycle
+├── test_retarget.py            # piano roll channel retargeting
+├── test_read_all_notes.py      # multi-pattern autolocate read
+├── pattern_writer_autolocate.py  # reference: autolocate write pattern
+└── pattern_generator_multiset.py # reference: multi-pattern analysis before edits
 
-install_mac.sh                     # NEW — Mac installer, replaces install_windows.ps1
-docs/MAC_PORT.md                   # NEW — technical archaeology of the port
-tests/test_protocol.py             # rewritten for file-bus client
+install_mac.sh                  # Mac installer
+tests/
+├── test_protocol.py            # file-bus client tests (all offline)
+├── test_server_build.py        # verifies tool list; asserts gen_* are absent
+└── test_generators.py          # music theory unit tests (generators.py still importable)
 ```
 
 ## Piano roll edit workflow — MANDATORY
 
-**Always follow this sequence when editing piano roll content. Do not skip steps.**
+**Always follow this sequence. Do not skip steps.**
 
-1. **Read first** — call `piano_roll_read_patterns_autolocate()` before any write, even if you think you know the current state. This confirms what is actually in FL, records the currently-selected pattern/channel, and gives you the ground truth to work from.
-
-2. **Plan edits** — derive the new notes from the read data. Never invent note data from memory or a previous session.
-
-3. **Write with `piano_roll_write_patterns`** (plural) — pass all intended writes as a single list. This tool sequences them internally and restores back to the original pattern/channel **only once at the very end**, exactly like the read tool. Do not use `piano_roll_write_pattern` (singular) for multi-pattern edits — it restores after every single write, causing FL to jump back between each one.
-
-4. **Confirm** — after writing, call `piano_roll_read_patterns_autolocate()` again if there is any doubt about whether the write landed correctly.
+1. **Full sweep read first** — `piano_roll_read_patterns_autolocate()` (all patterns, no args) before any edit session, even if you think you know the state. This is mandatory at the start of every edit session.
+2. **Plan** — derive notes from the read data. Never invent from memory or a previous session.
+3. **Write with `piano_roll_write_patterns`** (plural) — pass all writes as a single list. Do **not** call `piano_roll_write_pattern` (singular) in a loop — it fires a separate Cmd+Opt+Y per write.
+4. **FL stays on last edited pattern/channel** — `restore_start` defaults to `False` on all read and write tools. Do not pass `restore_start=True` unless there is a specific reason to jump back.
+5. **Confirm** — call `piano_roll_read_patterns_autolocate()` again if there is any doubt.
 
 ### Why this matters
 
-- `piano_roll_write_pattern` (singular) has `restore_start=True` by default. Calling it in a loop restores FL to the original pattern after **every** write — the user sees FL jumping around.
-- `piano_roll_write_patterns` (plural) restores only once, at the end — same behaviour as the read tool.
-- Skipping the read step risks writing notes derived from stale or imagined state.
-- Pattern writes share a single file bus (`fLMCP_request.json`) and a single `Cmd+Opt+Y` trigger — **do not fire writes in parallel**; they will race and corrupt each other.
+- `restore_start=False` (the default) means FL stays wherever the last write/read left it — no visible jumping back.
+- `restore_start=True` can still be passed explicitly when a caller genuinely needs FL to return to a specific pattern.
+- Skipping the full sweep read means writing notes from stale/imagined state.
+- Piano-roll writes share one file bus (`fLMCP_request.json`) and one `Cmd+Opt+Y` — **no parallel writes**.
 
-## Smart things to know
+### When to do a full sweep vs. targeted read
 
-### When debugging "bridge unavailable" errors
+- **Before any edit session** — always full sweep (`piano_roll_read_patterns_autolocate()` with no args).
+- **After edits** — only re-read the patterns you changed, or re-read all if something looks wrong.
+- **No need to re-read** if you just wrote notes and the write returned `ok=True` with the expected `note_count`.
 
-Likely causes, in order:
-1. FL Studio not running, or the `fLMCP Bridge` controller isn't enabled in MIDI Settings (Input row should be green with Port=1)
-2. OnIdle not firing — verify by adding a heartbeat log: if no logs appear in FL's MIDI script output for 30 seconds, the controller isn't getting callbacks. Re-check Input/Output port assignments.
-3. The bus dir doesn't exist — `install_mac.sh` should create it; FL can't.
+## Development rules
 
-### When piano-roll edits silently fail
+- **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 must pass.
+- **Smoke test with FL running** for any change that touches `bridge_client.py`, `file_bridge.py`, `device_FLStudioMCP.py`, or `ComposeWithLLM.pyscript`: `.venv/bin/python scripts/smoke_test_mac.py`
+- **Do not add `os.mkdir`, threads, subprocess, or sockets inside the FL bridge** — all blocked by audit hook.
+- **Do not pass `new_window=1` to `openEventEditor` repeatedly** — crashes FL with duplicate PRForm.
+- **Do not remove the IAC port** — OnIdle won't fire without it.
+- **Do not re-enable generators** without discussing it first — they were removed intentionally.
 
-`stage_and_run()` returns `ok=False, hotkey_sent=True` means the keystroke fired but the state file never refreshed. Causes:
-1. `ComposeWithLLM` is not the currently-bound piano-roll script — user needs to manually run it once from the piano-roll scripts dropdown.
-2. FL Studio isn't focused — `osascript` brings it forward but if Accessibility permission is missing, `pynput` can't send the keystroke.
-3. The piano roll for the wrong channel is loaded (see next point).
+## Troubleshooting
 
-### Piano roll channel retargeting
+### "bridge unavailable"
+1. FL Studio not running, or fLMCP Bridge controller not enabled (Input row should be green, Port=1).
+2. OnIdle not firing — check both Input AND Output are assigned to the fLMCP IAC port at Port=1.
+3. `bus/` dir missing — run `./install_mac.sh`.
 
-`ui.openPianoRoll(channel=N, pattern=M)` programmatically loads channel N's piano roll for pattern M, using the documented piano-roll event id: `channels.getRecEventId(N) + midi.REC_Chan_PianoRoll`, then `ui.openEventEditor(event_id, midi.EE_PR, new_window)`. **Critical:** if piano roll is already visible, use `new_window=0` to reuse — passing `new_window=1` repeatedly creates duplicate `PRForm` components and crashes FL Studio with `"Duplicate name: A component named PRForm already exists"`.
+### Piano-roll edits silently fail (`ok=False, hotkey_sent=True`)
+1. `ComposeWithLLM` not the active piano-roll script — click it once from the scripts dropdown.
+2. Accessibility permission missing for terminal / Claude Code.
+3. Piano roll open on wrong channel (use pattern-only switching via `piano_roll_read_patterns_autolocate`).
 
-`openEventEditor` can still visibly tear down/rebuild the piano-roll window when changing channels. Avoid it when possible. If FL's auto-locate behavior is active and each pattern's notes are on its expected/main channel, prefer pattern-only switching: `patterns.select(pattern)` followed by `piano_roll_read()` / `stage_and_run([{action: "export_only"}])`. The MCP tool `piano_roll_read_patterns_autolocate(patterns_to_read=None, restore_start=True)` implements this workflow and restores the starting pattern.
+### Piano roll window disappears/reappears
+Explicit channel retargeting uses `openEventEditor` which rebuilds the window. Prefer `piano_roll_read_patterns_autolocate` and `piano_roll_write_patterns` (pattern-only switching) to avoid it.
 
-There's a known visual glitch where explicit channel retargeting can make the piano-roll window disappear/reappear. Pattern-only switching avoids that for projects where auto-locate follows the intended channel.
+### Bridge handlers in device script
+`h_pianoroll_*` in `device_FLStudioMCP.py` try to write to `Piano roll scripts/` — blocked on Mac (outside controller sandbox). Tools in `tools/piano_roll.py` correctly route around this via `file_bridge.stage_and_run()`. The handlers are dead code kept for Windows compatibility. Do not try to fix them.
 
-### Bridge handlers in the device script
-
-The bridge handlers `h_pianoroll_*` (in `device_FLStudioMCP.py`) try to write to `Piano roll scripts/fLMCP_request.json` — this fails on Mac because that dir is outside the controller's sandbox. The Claude-facing tools in `tools/piano_roll.py` correctly route around the bridge by calling `file_bridge.stage_and_run()` directly (which writes from outside FL). The bridge handlers are kept as dead code for Windows compatibility; on Mac they fail silently with a logged warning. **Don't try to "fix" them by routing through the bridge.**
-
-### Don't try these "improvements"
-
-- Adding `os.mkdir` calls in the bridge — blocked
-- Adding threads to the bridge — blocked
-- Adding subprocess calls in the bridge — blocked
-- Always passing `new_window=1` to `openEventEditor` — crashes FL after a few calls
-- Removing the IAC port — OnIdle won't fire without it
-
-### Things that probably do work but are untested
-
-- The `[audio]` extras (numpy/librosa/etc) for voice-to-MIDI and audio analysis tools
-- High-level generators (`gen_emit_chord_progression`, `gen_emit_drum_pattern`, etc.)
-- Step 5 — full Claude Code session driving the MCP server
-
-## Test scripts the user may want to run
+## Test scripts
 
 ```bash
 cd /Users/calvinw/develop/FLStudioMCP
 
-# 1. Sanity check the file bus
-.venv/bin/python scripts/smoke_test_mac.py
+# Unit tests (all offline, no FL needed) — run before every commit
+.venv/bin/python -m pytest tests/ -v
+# Expected: 15 passed
 
-# 2. Watch FL respond to specific calls
+# Live tests (FL must be running)
+.venv/bin/python scripts/smoke_test_mac.py        # basic round-trip ~25-50ms
 .venv/bin/python scripts/test_step2_interactive.py
-
-# 3. Iterate patterns + open piano roll for each
 .venv/bin/python scripts/test_step3_iterate_patterns.py
-
-# 4. Piano-roll edit cycle (clear, add chord, transpose, clear)
 .venv/bin/python scripts/test_step4_piano_roll.py
-
-# Test piano-roll channel retargeting
 .venv/bin/python scripts/test_retarget.py
-
-# Read notes from main/autolocated channels without explicit channel retargeting
 .venv/bin/python scripts/test_read_all_notes.py
-
-# Run unit tests (5 pass; 2 fail with no module 'numpy' — those are expected)
-.venv/bin/python -m pytest tests/test_protocol.py
 ```
 
-## When the user asks to commit
+## Recently resolved
 
-Suggested commit message for the bulk of the changes:
-
-```
-Add macOS support: replace TCP transport with file-bus
-
-FL Studio 2025's Python sub-interpreter on Mac blocks threads, sockets,
-subprocesses, mkdir, unlink, and rename via aggressive audit hooks. The
-upstream TCP-based architecture is fundamentally incompatible.
-
-This commit:
-- Replaces TCP socket bridge with a file-bus (req_*.json / resp_*.json)
-  serviced by OnIdle. The MCP client uses atomic tmp+rename writes; FL
-  writes responses directly and the client tolerates partial reads.
-- Adds Mac keystroke implementation (osascript focus + pynput Cm+Opt+Y)
-  for the piano-roll Cmd+Opt+Y trick.
-- Pre-creates the bus directory and piano-roll stub files in
-  install_mac.sh because FL can't mkdir or create new files in sibling
-  directories.
-- Programmatically retargets the piano roll to a specific channel via
-  channels.getRecEventId + ui.openEventEditor.
-- Makes audio/voice tool modules optional so the server starts without
-  numpy/librosa.
-
-Tested end-to-end: 160+ tools, transport, patterns, channels, mixer,
-piano-roll edits, all working on macOS 26.3.1 / FL Studio 2025.
-```
-
-## Recently asked / resolved
-
-- "Should we fork?" → Yes, fork on GitHub when ready, then `git remote set-url origin <fork-url>`. Local clone is the working copy meanwhile.
-- "Will MIDI notes be up to date?" → Yes — stateless on-demand queries from the bridge. No caching/state-mirror like the user's other repo had.
-- "Can we iterate patterns?" → Yes; `test_step3_iterate_patterns.py` demonstrates.
-- "Can we control which channel × pattern is in the piano roll?" → Yes, via `ui.openPianoRoll(channel=N, pattern=M)`; demonstrated in `test_retarget.py`.
-- "Notes wiped during end-of-edit cycle" → **Fixed.** Root cause: `stage_and_run` in `file_bridge.py` was calling `_append_request()` in a loop, which read-and-appended to `fLMCP_request.json` on every action. If the pyscript hadn't cleared the file yet from a prior run, stale actions (especially `clear`) accumulated and re-executed on the next `Cmd+Opt+Y`. Fix: replaced the loop with a single `_write_json(REQUEST_FILE, actions)` — fresh atomic overwrite, no accumulation. Confirmed working: multi-channel edit (2 channels, different notes) followed by end-of-edit cycle retarget reads back correct notes on both channels.
+- **TCP sockets on Mac** — blocked by audit hook. File-bus is the current approach; no known workaround.
+- **Notes wiped during end-of-edit cycle** — fixed. `stage_and_run` was appending to `fLMCP_request.json` instead of overwriting; stale `clear` actions accumulated. Fixed by using a single `_write_json()` call.
+- **FL jumping between patterns during multi-pattern write** — fixed. Use `piano_roll_write_patterns` (plural), not `piano_roll_write_pattern` (singular) in a loop.
+- **FL jumping back to original pattern/channel after reads and writes** — fixed. `restore_start` now defaults to `False` on all three piano roll tools. FL stays on the last edited/read pattern. Pass `restore_start=True` explicitly only when a deliberate jump-back is needed.
+- **Duplicate PRForm crash** — always pass `new_window=0` to `openEventEditor` when piano roll is already visible.
+- **Generator tools removed** — LLM computes music theory natively; `gen_*` tools were redundant wrappers.
+- **Fork remote** — `origin` now points at `https://github.com/calvinw/FLStudioMCP.git`.

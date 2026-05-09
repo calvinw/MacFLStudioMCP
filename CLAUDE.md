@@ -150,6 +150,25 @@ docs/MAC_PORT.md                   # NEW — technical archaeology of the port
 tests/test_protocol.py             # rewritten for file-bus client
 ```
 
+## Piano roll edit workflow — MANDATORY
+
+**Always follow this sequence when editing piano roll content. Do not skip steps.**
+
+1. **Read first** — call `piano_roll_read_patterns_autolocate()` before any write, even if you think you know the current state. This confirms what is actually in FL, records the currently-selected pattern/channel, and gives you the ground truth to work from.
+
+2. **Plan edits** — derive the new notes from the read data. Never invent note data from memory or a previous session.
+
+3. **Write with `piano_roll_write_patterns`** (plural) — pass all intended writes as a single list. This tool sequences them internally and restores back to the original pattern/channel **only once at the very end**, exactly like the read tool. Do not use `piano_roll_write_pattern` (singular) for multi-pattern edits — it restores after every single write, causing FL to jump back between each one.
+
+4. **Confirm** — after writing, call `piano_roll_read_patterns_autolocate()` again if there is any doubt about whether the write landed correctly.
+
+### Why this matters
+
+- `piano_roll_write_pattern` (singular) has `restore_start=True` by default. Calling it in a loop restores FL to the original pattern after **every** write — the user sees FL jumping around.
+- `piano_roll_write_patterns` (plural) restores only once, at the end — same behaviour as the read tool.
+- Skipping the read step risks writing notes derived from stale or imagined state.
+- Pattern writes share a single file bus (`fLMCP_request.json`) and a single `Cmd+Opt+Y` trigger — **do not fire writes in parallel**; they will race and corrupt each other.
+
 ## Smart things to know
 
 ### When debugging "bridge unavailable" errors

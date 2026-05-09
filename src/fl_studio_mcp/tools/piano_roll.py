@@ -213,6 +213,169 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool()
+    def piano_roll_write_pattern(
+        channel: int,
+        pattern: int,
+        notes: list[PianoRollNote],
+        clear_first: bool = True,
+        restore_start: bool = True,
+    ) -> dict:
+        """Write notes to a specific channel × pattern using autolocate-style switching.
+
+        Mirrors piano_roll_read_patterns_autolocate: switches to the target
+        pattern via patterns.select (no openEventEditor, no visual flicker),
+        selects the channel, then stages a clear+add_notes action sequence and
+        fires Cmd+Opt+Y.
+
+        Args:
+            channel: Channel rack index (0-based).
+            pattern: Pattern index (1-based, as returned by patterns.list).
+            notes: List of notes with midi, time_bars, duration_bars, velocity.
+            clear_first: Clear the pattern before writing (default True).
+            restore_start: Restore the original pattern/channel when done (default True).
+
+        Returns:
+            {ok, note_count, hotkey_sent, restored}
+        """
+        c = get_client()
+
+        # Remember starting position so we can restore it
+        start_pattern = c.call("patterns.current")
+        start_channel = c.call("channels.selected")
+        start_pat_idx = start_pattern.get("index")
+
+        # Switch to target pattern + channel (same as autolocate writer)
+        c.call("patterns.select", index=pattern)
+        c.call("channels.select", index=channel)
+        time.sleep(0.25)
+
+        # Convert bar-based notes to quarter-note times expected by pyscript
+        pyscript_notes = []
+        for n in notes:
+            time_bars = n.time_bars if n.time_bars is not None else (
+                n.time if n.time is not None else 0.0)
+            duration_bars = n.duration_bars if n.duration_bars is not None else (
+                n.duration if n.duration is not None else 1.0)
+            pyscript_notes.append({
+                "midi": int(n.midi),
+                "time": _bars_to_quarters(float(time_bars)),
+                "duration": _bars_to_quarters(float(duration_bars)),
+                "velocity": float(n.velocity),
+                **({"pan": float(n.pan)} if n.pan is not None else {}),
+            })
+
+        actions: list[dict] = []
+        if clear_first:
+            actions.append({"action": "clear"})
+        actions.append({"action": "add_notes", "notes": pyscript_notes})
+
+        write_result = stage_and_run(actions, wait_sec=5.0)
+
+        # Restore starting pattern/channel
+        restored = None
+        if restore_start and start_pat_idx is not None:
+            c.call("patterns.select", index=start_pat_idx)
+            start_ch = (start_channel.get("channel") or {}).get("index")
+            if start_ch is not None:
+                c.call("channels.select", index=start_ch)
+            time.sleep(0.2)
+            restore_result = stage_and_run([{"action": "export_only"}], wait_sec=5.0)
+            restored = {
+                "pattern": start_pattern,
+                "channel": start_channel.get("channel"),
+                "ok": bool(restore_result.get("ok")),
+            }
+
+        return {
+            "ok": write_result.get("ok", False),
+            "note_count": len(pyscript_notes),
+            "hotkey_sent": write_result.get("hotkey_sent"),
+            "restored": restored,
+        }
+
+    @mcp.tool()
+    def piano_roll_write_patterns(
+        writes: list[dict],
+        clear_first: bool = True,
+        restore_start: bool = True,
+    ) -> dict:
+        """Write notes to multiple channel × pattern pairs sequentially, restoring only at the end.
+
+        Mirrors piano_roll_read_patterns_autolocate: iterates through all writes
+        in order without jumping back between each one, then restores to the
+        original pattern/channel once at the very end.
+
+        Args:
+            writes: List of {channel: int, pattern: int, notes: [{midi, time_bars, duration_bars, velocity}]}.
+            clear_first: Clear each pattern before writing (default True).
+            restore_start: Restore the original pattern/channel after all writes (default True).
+
+        Returns:
+            {results: [{channel, pattern, ok, note_count, hotkey_sent}], restored}
+        """
+        c = get_client()
+
+        start_pattern = c.call("patterns.current")
+        start_channel = c.call("channels.selected")
+        start_pat_idx = start_pattern.get("index")
+        start_ch_idx = (start_channel.get("channel") or {}).get("index")
+
+        results = []
+        for entry in writes:
+            channel = int(entry["channel"])
+            pattern = int(entry["pattern"])
+            raw_notes = entry.get("notes", [])
+
+            c.call("patterns.select", index=pattern)
+            c.call("channels.select", index=channel)
+            time.sleep(0.25)
+
+            pyscript_notes = []
+            for n in raw_notes:
+                time_bars = float(n.get("time_bars") or n.get("time") or 0.0)
+                duration_bars = float(n.get("duration_bars") or n.get("duration") or 1.0)
+                pyscript_notes.append({
+                    "midi": int(n["midi"]),
+                    "time": _bars_to_quarters(time_bars),
+                    "duration": _bars_to_quarters(duration_bars),
+                    "velocity": float(n.get("velocity", 0.8)),
+                    **({"pan": float(n["pan"])} if "pan" in n else {}),
+                })
+
+            actions: list[dict] = []
+            if clear_first:
+                actions.append({"action": "clear"})
+            actions.append({"action": "add_notes", "notes": pyscript_notes})
+
+            write_result = stage_and_run(actions, wait_sec=5.0)
+            results.append({
+                "channel": channel,
+                "pattern": pattern,
+                "ok": write_result.get("ok", False),
+                "note_count": len(pyscript_notes),
+                "hotkey_sent": write_result.get("hotkey_sent"),
+            })
+
+        restored = None
+        if restore_start and start_pat_idx is not None:
+            c.call("patterns.select", index=start_pat_idx)
+            if start_ch_idx is not None:
+                c.call("channels.select", index=start_ch_idx)
+            time.sleep(0.2)
+            restore_result = stage_and_run([{"action": "export_only"}], wait_sec=5.0)
+            restored = {
+                "pattern": start_pattern,
+                "channel": start_channel.get("channel"),
+                "ok": bool(restore_result.get("ok")),
+            }
+
+        return {
+            "results": results,
+            "restored": restored,
+            "total_notes": sum(r["note_count"] for r in results),
+        }
+
+    @mcp.tool()
     def piano_roll_quantize(grid_bars: float = 0.25,
                             strength: float = 1.0) -> dict:
         """Snap existing notes to a grid."""

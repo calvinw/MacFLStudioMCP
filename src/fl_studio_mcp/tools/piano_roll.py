@@ -27,9 +27,20 @@ import time
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from ..bridge_client import get_client
 from ..file_bridge import stage_and_run
+
+
+class PianoRollNote(BaseModel):
+    midi: int
+    time_bars: float | None = None
+    duration_bars: float | None = None
+    time: float | None = None
+    duration: float | None = None
+    velocity: float = 0.8
+    pan: float | None = None
 
 
 def _bars_to_quarters(bars: float) -> float:
@@ -52,7 +63,7 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool()
-    def piano_roll_add_notes(notes: list[dict],
+    def piano_roll_add_notes(notes: list[PianoRollNote],
                              clear_first: bool = False) -> dict:
         """Add notes to the currently-open piano roll (works WITHOUT MIDI).
 
@@ -69,12 +80,14 @@ def register(mcp: FastMCP) -> None:
             actions.append({"action": "clear"})
         pyscript_notes = []
         for n in notes:
+            time_bars = n.time_bars if n.time_bars is not None else (n.time if n.time is not None else 0.0)
+            duration_bars = n.duration_bars if n.duration_bars is not None else (n.duration if n.duration is not None else 1.0)
             pyscript_notes.append({
-                "midi": int(n["midi"]),
-                "time": _bars_to_quarters(float(n.get("time_bars", n.get("time", 0)))),
-                "duration": _bars_to_quarters(float(n.get("duration_bars", n.get("duration", 1.0)))),
-                "velocity": float(n.get("velocity", 0.8)),
-                **({"pan": float(n["pan"])} if "pan" in n else {}),
+                "midi": int(n.midi),
+                "time": _bars_to_quarters(float(time_bars)),
+                "duration": _bars_to_quarters(float(duration_bars)),
+                "velocity": float(n.velocity),
+                **({"pan": float(n.pan)} if n.pan is not None else {}),
             })
         actions.append({"action": "add_notes", "notes": pyscript_notes})
         return stage_and_run(actions)

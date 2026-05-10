@@ -9,6 +9,8 @@ The original repo has a good overview of the architecture and what is possible �
 this fork adapts it for macOS where FL Studio's Python interpreter blocks sockets,
 threads, and subprocesses, requiring a file-bus approach instead of TCP.
 
+**See it in action:** [video demo](https://youtu.be/np0DxRHHmsQ?si=1u5Bi02eK1uj5EIz)
+
 ## Two ways to use it
 
 **Agentic tools (Claude Code, OpenCode, Codex)** — the MCP server runs on your
@@ -122,9 +124,13 @@ Copy that `https://…trycloudflare.com` URL — you'll use it in the next step.
 ### Add the server in Claude.ai
 
 1. Go to **claude.ai → Settings → Integrations**.
-2. Click **Add MCP server**.
-3. Enter the ngrok URL as the server URL.
-4. Save. Claude.ai will probe the endpoint and list the available tools.
+2. Click **Add custom integration** (or **Add MCP server**).
+3. Fill in the fields:
+   - **Name:** `FLStudioMCP`
+   - **URL:** `https://random-words-here.trycloudflare.com/mcp`
+     *(replace `random-words-here` with the actual subdomain from your tunnel)*
+   - **Authentication:** None
+4. Click **Save**. Claude.ai will connect and list the available tools.
 
 ## License
 

@@ -108,8 +108,8 @@ start Claude Code as normal — the FL Studio MCP server will be available autom
 
 Start the MCP server in HTTP mode. It will run on your local Mac and we will
 use a Cloudflare tunnel to allow Claude.ai to connect to it as a Remote MCP
-server (or connector). Run this in a terminal window and keep it running while
-using the MCP server:
+server (or connector). Make sure you are in the `MacFLStudioMCP` folder, then
+run this in a terminal window and keep it running while using the MCP server:
 
 ```bash
 .venv/bin/python -m fl_studio_mcp --transport http --port 8000

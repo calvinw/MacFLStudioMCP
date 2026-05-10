@@ -16,8 +16,8 @@ Mac as a subprocess of your coding agent using stdio transport. This is the
 default mode and requires no networking.
 
 **Web-based remote MCP connectors (Claude.ai, Mistral.ai)** — the server runs
-as a persistent HTTP process on your Mac and is exposed via a public URL (e.g.
-an ngrok tunnel). Both Claude.ai and Mistral.ai support remote MCP connectors,
+as a persistent HTTP process on your Mac and is exposed via a public URL using
+a cloudflared tunnel. Both Claude.ai and Mistral.ai support remote MCP connectors,
 including on their **free tiers**, so you can control FL Studio from either site
 without a paid subscription.
 
@@ -99,17 +99,25 @@ Keep this terminal open while using Claude.ai.
 ### Expose the server
 
 Claude.ai runs in the cloud and cannot reach `127.0.0.1` directly. Use
-[ngrok](https://ngrok.com) to create a tunnel:
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+to create a free tunnel with a random public URL — no account required:
 
 ```bash
-ngrok http 8000
+cloudflared tunnel --url http://localhost:8000
 ```
 
-Copy the `https://…ngrok-free.app` URL it prints.
+It prints a line like:
+
+```
+Your quick Tunnel has been created! Visit it at (it may take some time to be fully reachable):
+https://random-words-here.trycloudflare.com
+```
+
+Copy that `https://…trycloudflare.com` URL — you'll use it in the next step.
 
 > **Security note:** the tunnel exposes your FL Studio instance to anyone who
-> knows the URL. Use ngrok's auth token (or a paid plan with IP allowlist) to
-> restrict access.
+> knows the URL. The random URL is unguessable, but stop the tunnel when you're
+> done to close access.
 
 ### Add the server in Claude.ai
 
@@ -117,50 +125,6 @@ Copy the `https://…ngrok-free.app` URL it prints.
 2. Click **Add MCP server**.
 3. Enter the ngrok URL as the server URL.
 4. Save. Claude.ai will probe the endpoint and list the available tools.
-
-## Tool catalogue
-
-| Area | Highlights |
-| --- | --- |
-| Meta | ping, reconnect, bridge info, raw escape hatch |
-| Transport | play / stop / record, tempo (undoable), time signature, metronome, jog |
-| Patterns | create, rename, clone, color, length, find-by-name |
-| Channels | full rack, step sequencer get / set, routing, trigger note |
-| Mixer | vol / pan / mute / solo / arm, sends, 3-band EQ, FX slots |
-| Plugins | get / set / search params, preset navigation, show editor |
-| Piano roll | add, read (single + multi-pattern autolocate), write (single + multi-pattern), clear, quantize, transpose, humanize, duplicate |
-| Playlist | tracks, clips, markers |
-| Arrangement | current, list, select, jump marker |
-| Automation | tempo, channel vol / pan, mixer vol, plugin params |
-| Project | metadata, save, save-as, undo / redo, render |
-| UI | show / hide windows, hints, scroll to channel |
-
-## Troubleshooting
-
-| Symptom | Fix |
-| --- | --- |
-| `bridge unavailable` | FL not running, or the fLMCP Bridge controller isn't enabled. Check Options → MIDI Settings → Input; the fLMCP row should be green with Port = 1. |
-| `OnIdle` never fires (no log output) | Both Input **and** Output must be assigned to the IAC fLMCP port at Port = 1. |
-| Piano-roll edits silently fail (`ok=False, hotkey_sent=True`) | `ComposeWithLLM` is not the active piano-roll script — click it once from the scripts dropdown. Or Accessibility permission is missing. |
-| Piano-roll window disappears/reappears | Use `piano_roll_read_patterns_autolocate` and `piano_roll_write_patterns` (pattern-only switching) to avoid explicit channel retargeting. |
-| `pynput` error on install | Make sure Accessibility permission is granted before running the MCP server. |
-| `voice_*` / `audio_*` tools missing | Heavy optional deps not installed. Run `pip install "fl-studio-mcp[audio]"` if you need them. |
-
-## Development
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pytest
-```
-
-Tests in `tests/` run entirely offline — no FL Studio needed.
-
-## Contributing
-
-Issues and PRs welcome at <https://github.com/calvinw/MacFLStudioMCP>. Please
-run `pytest` before opening a PR.
 
 ## License
 

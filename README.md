@@ -11,16 +11,15 @@ threads, and subprocesses, requiring a file-bus approach instead of TCP.
 
 ## Two ways to use it
 
-**Local (stdio)** — the MCP server runs on your Mac as a subprocess of your MCP
-client. This is the default and works with Claude Code and any other desktop MCP
-client that supports stdio transport.
+**Agentic tools (Claude Code, OpenCode, Codex)** — the MCP server runs on your
+Mac as a subprocess of your coding agent using stdio transport. This is the
+default mode and requires no networking.
 
-**Remote (HTTP/streamable)** — the server runs as a persistent HTTP process on
-your Mac and is reachable from anywhere via a public URL (e.g. an ngrok tunnel).
-This works with any MCP client that supports remote connectors, including
-web-based AI assistants. Both **Claude.ai** and **Mistral.ai** support MCP
-remote connectors — and both support them on their **free tiers**, so you can
-control FL Studio from either site without a paid subscription.
+**Web-based remote MCP connectors (Claude.ai, Mistral.ai)** — the server runs
+as a persistent HTTP process on your Mac and is exposed via a public URL (e.g.
+an ngrok tunnel). Both Claude.ai and Mistral.ai support remote MCP connectors,
+including on their **free tiers**, so you can control FL Studio from either site
+without a paid subscription.
 
 ## Requirements
 

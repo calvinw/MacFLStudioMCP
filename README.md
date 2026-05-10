@@ -76,6 +76,8 @@ send `Cmd+Opt+Y` and piano-roll edits will silently fail.
    **Controller type** = `fLMCP Bridge`, **Port** = 1, click **Enable**.
 3. **Options → MIDI Settings → Output**: same `fLMCP` row, Port = 1.
 
+![MIDI Settings](https://github.com/user-attachments/assets/531e0c61-f0cb-4c2d-bd0e-0a045c308cb7)
+
 FL remembers these settings — you only need to do this once.
 
 ### Each launch

@@ -45,8 +45,8 @@ The installer:
    `~/Documents/Image-Line/FL Studio/Settings/Piano roll scripts/`
 3. Pre-creates `fLMCP_request.json` and `fLMCP_state.json` as empty stubs.
 4. Creates the `bus/` directory.
-5. Creates `.venv/` and installs the package editable (`pip install -e .`).
-6. Adds an `fl-studio-mcp` entry to `~/.claude.json` (Claude Code).
+5. Creates `.venv/` and installs the package with Mac dependencies (`pip install -e ".[mac]"`).
+6. Registers the server with Claude Code via `claude mcp add`.
 
 ## One-time setup
 
@@ -76,7 +76,7 @@ send `Cmd+Opt+Y` and piano-roll edits will silently fail.
 
 ## Using with Claude Code (stdio)
 
-The installer already adds the server to `~/.claude.json`. Restart Claude Code
+The installer registers the server via `claude mcp add`. Restart Claude Code
 to pick it up, then verify:
 
 ```bash

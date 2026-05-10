@@ -150,11 +150,17 @@ Copy that `https://…trycloudflare.com` URL — you'll use it in the next step.
 
 1. Go to **claude.ai → Settings → Integrations**.
 2. Click **Add custom integration** (or **Add MCP server**).
+
+![Claude.ai Add Integration](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
+
 3. Fill in the fields:
    - **Name:** `FLStudioMCP`
    - **URL:** `https://random-words-here.trycloudflare.com/mcp`
      *(replace `random-words-here` with the actual subdomain from your tunnel)*
    - **Authentication:** None
+
+![Claude.ai Connector Settings](https://github.com/user-attachments/assets/498d813f-145c-415b-92e4-6c1e8fc61733)
+
 4. Click **Save**. Claude.ai will connect and list the available tools.
 
 ## License

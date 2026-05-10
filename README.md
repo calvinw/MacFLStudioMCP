@@ -9,7 +9,9 @@ The original repo has a good overview of the architecture and what is possible â
 this fork adapts it for macOS where FL Studio's Python interpreter blocks sockets,
 threads, and subprocesses, requiring a file-bus approach instead of TCP.
 
-**See it in action:** [video demo](https://youtu.be/np0DxRHHmsQ?si=1u5Bi02eK1uj5EIz)
+**See it in action:**
+
+[![FLStudioMCP demo](https://img.youtube.com/vi/np0DxRHHmsQ/maxresdefault.jpg)](https://youtu.be/np0DxRHHmsQ?si=1u5Bi02eK1uj5EIz)
 
 ## Two ways to use it
 

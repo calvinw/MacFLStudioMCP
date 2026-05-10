@@ -92,9 +92,10 @@ FL remembers these settings — you only need to do this once.
 
 ### Each launch
 
-1. Open FL's script output (**View → Script output**) and confirm you see
+1. Start FL Studio.
+2. To check everything is ready, go to **View → Script Output** and look for
    `[fLMCP] bridge ready`.
-2. Open any piano roll, click the **scripts dropdown** (top-right corner), and
+3. Open any piano roll, click the **scripts dropdown** (top-right corner), and
    click **ComposeWithLLM**. FL forgets this on quit, so repeat each time you
    relaunch FL.
 

@@ -63,6 +63,8 @@ The installer:
 
 ![IAC Driver setup](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
 
+![IAC Driver port](https://github.com/user-attachments/assets/498d813f-145c-415b-92e4-6c1e8fc61733)
+
 ### Accessibility permission
 
 System Settings → Privacy & Security → Accessibility → enable your terminal

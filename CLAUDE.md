@@ -14,6 +14,7 @@ This file gives any future Claude session enough context to be useful immediatel
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
 6. **Piano roll workflow is mandatory** — read → plan → write (plural) → confirm. See the dedicated section below.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
+8. **Channel mute workflow is mandatory during edits** — mute all other channels before editing one, restore when done. See the dedicated section below.
 
 ---
 
@@ -178,6 +179,31 @@ tests/
 ├── test_server_build.py        # verifies tool list; asserts gen_* are absent
 └── test_generators.py          # music theory unit tests (generators.py still importable)
 ```
+
+## Channel mute workflow — MANDATORY during edits
+
+**Always mute other channels before editing a channel, unmute when done.**
+
+### Editing a single channel
+
+1. Read all channel mute states (`channel_all`) so you know the current state.
+2. **Mute all channels except the one being edited** (`channel_mute` with `muted=True`).
+3. Make the edit (piano roll write, step sequence, etc.).
+4. **Unmute all channels** that were unmuted before you started.
+
+### Editing multiple channels sequentially
+
+1. Read all channel mute states.
+2. For each channel to edit:
+   - Mute all *other* channels.
+   - Make the edit.
+3. When all edits are done, **unmute every channel** that was unmuted before you started.
+
+### Why this matters
+
+The user can hear each channel in isolation as it is being edited, without other parts masking or interfering. Never leave channels in a different mute state than they were in at the start of the session — always restore.
+
+---
 
 ## Piano roll edit workflow — MANDATORY
 

@@ -92,3 +92,28 @@ def register(mcp: FastMCP) -> None:
     def fl_call_raw(action: str, params: dict | None = None) -> dict:
         """Escape hatch: invoke any action the main bridge accepts with arbitrary params."""
         return get_client().call(action, **(params or {}))
+
+    @mcp.tool()
+    def fl_test_mac_restrictions() -> dict:
+        """Test which operations are blocked by FL Studio's macOS audit hook.
+
+        FL Studio 2025 on macOS runs Python in a heavily-restricted sub-interpreter.
+        This tool reports which operations are blocked (sockets, threads, subprocess,
+        file I/O restrictions, etc.) and which are allowed.
+
+        Returns a dict mapping operation names to status strings:
+            "OK" = operation succeeded
+            "BLOCKED: <error>" = audit hook blocked the operation
+
+        Expected on macOS:
+            sockets, threads, subprocess, mkdir, unlink, rename = BLOCKED
+            file_io = OK
+        """
+        try:
+            return get_client().call("meta.testRestrictions")
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": str(e),
+                "hint": "This tool requires FL Studio to be running with fLMCP Bridge enabled.",
+            }

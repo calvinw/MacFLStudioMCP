@@ -268,6 +268,151 @@ def h_meta_info(_):
     }
 
 
+def h_meta_test_restrictions(_):
+    """Test which operations are blocked by FL Studio's audit hook on macOS.
+
+    Returns a dict mapping operation names to status strings:
+    - "OK" means the operation succeeded
+    - "BLOCKED: <error>" means the audit hook or sub-interpreter blocked it
+    """
+    results = {}
+
+    # Report Python version
+    try:
+        results["python_version"] = sys.version.split()[0]
+        results["python_implementation"] = sys.implementation.name if hasattr(sys, "implementation") else "unknown"
+    except Exception as e:
+        results["python_version"] = "unknown"
+
+    # Test 1: socket creation
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.close()
+        results["sockets"] = "OK"
+    except Exception as e:
+        results["sockets"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 2: threading
+    try:
+        import threading
+        t = threading.Thread(target=lambda: None)
+        t.start()
+        t.join(timeout=0.1)
+        results["threads"] = "OK"
+    except Exception as e:
+        results["threads"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 3: subprocess
+    try:
+        import subprocess
+        subprocess.run(["echo", "test"], capture_output=True, timeout=1.0)
+        results["subprocess"] = "OK"
+    except Exception as e:
+        results["subprocess"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 4: tempfile / mkdir
+    try:
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        import os
+        os.rmdir(tmpdir)
+        results["tempfile_mkdir"] = "OK"
+    except Exception as e:
+        results["tempfile_mkdir"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 5: direct os.mkdir
+    try:
+        import os
+        test_path = "/tmp/fl_studio_mcp_test_mkdir_%d" % int(time.time() * 1000000) % 1000000
+        os.mkdir(test_path)
+        os.rmdir(test_path)
+        results["os_mkdir"] = "OK"
+    except Exception as e:
+        results["os_mkdir"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 6: os.unlink
+    try:
+        import os
+        import tempfile
+        fd, tmpfile = tempfile.mkstemp()
+        os.close(fd)
+        os.unlink(tmpfile)
+        results["os_unlink"] = "OK"
+    except Exception as e:
+        results["os_unlink"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 7: os.rename
+    try:
+        import os
+        import tempfile
+        fd1, tmp1 = tempfile.mkstemp()
+        os.close(fd1)
+        tmp2 = tmp1 + ".renamed"
+        os.rename(tmp1, tmp2)
+        os.unlink(tmp2)
+        results["os_rename"] = "OK"
+    except Exception as e:
+        results["os_rename"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 8: file I/O (should work)
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=True) as f:
+            f.write("test")
+        results["file_io"] = "OK"
+    except Exception as e:
+        results["file_io"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 9: mmap (memory mapping — lighter IPC alternative)
+    try:
+        import mmap
+        import tempfile
+        fd, tmpfile = tempfile.mkstemp()
+        os.write(fd, b"test data")
+        os.close(fd)
+        with open(tmpfile, 'r+b') as f:
+            with mmap.mmap(f.fileno(), 0) as m:
+                data = m[:]
+        os.unlink(tmpfile)
+        results["mmap"] = "OK"
+    except Exception as e:
+        results["mmap"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 10: fcntl (file locking — might work)
+    try:
+        import fcntl
+        import tempfile
+        fd, tmpfile = tempfile.mkstemp()
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        os.unlink(tmpfile)
+        results["fcntl_flock"] = "OK"
+    except Exception as e:
+        results["fcntl_flock"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 11: signal module (might partially work)
+    try:
+        import signal
+        # Just test if we can access it
+        _ = signal.SIGTERM
+        results["signal_module"] = "OK"
+    except Exception as e:
+        results["signal_module"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    # Test 12: select module (for I/O multiplexing)
+    try:
+        import select
+        # Just test if module loads
+        _ = select.select
+        results["select_module"] = "OK"
+    except Exception as e:
+        results["select_module"] = "BLOCKED: %s: %s" % (type(e).__name__, str(e))
+
+    return results
+
+
 # ---- transport --------------------------------------------------------------
 
 def _position_unit(unit):
@@ -1583,6 +1728,7 @@ _HANDLERS = {
     # meta
     "meta.ping": h_meta_ping,
     "meta.info": h_meta_info,
+    "meta.testRestrictions": h_meta_test_restrictions,
     # transport
     "transport.start": h_transport_start,
     "transport.stop": h_transport_stop,

@@ -58,12 +58,16 @@ The installer:
 
 1. Open **Audio MIDI Setup** (Applications → Utilities).
 2. Menu: **Window → Show MIDI Studio**.
-3. Double-click **IAC Driver** → check **Device is online** → add a port named
-   `fLMCP` (rename the default `Bus 1`). Click Apply.
+3. Double-click **IAC Driver**.
 
 ![IAC Driver setup](https://github.com/user-attachments/assets/498d813f-145c-415b-92e4-6c1e8fc61733)
 
+4. Check **Device is online**.
+5. Add a port named `fLMCP` (rename the default `Bus 1`).
+
 ![IAC Driver port](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
+
+6. Click **Apply**.
 
 ### Accessibility permission
 

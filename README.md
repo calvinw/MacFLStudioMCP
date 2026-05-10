@@ -153,7 +153,7 @@ Copy that `https://…trycloudflare.com` URL — you'll use it in the next step.
 
 ![Claude.ai Connectors](https://github.com/user-attachments/assets/2bfbcc68-e069-4bf8-9491-0d3c80056002)
 
-2. Click **Add custom integration** (or **Add MCP server**).
+2. Click **Add custom connector**.
 3. Fill in the fields:
    - **Name:** `FLStudioMCP`
    - **URL:** `https://random-words-here.trycloudflare.com/mcp`

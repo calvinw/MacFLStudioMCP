@@ -61,9 +61,9 @@ The installer:
 3. Double-click **IAC Driver** → check **Device is online** → add a port named
    `fLMCP` (rename the default `Bus 1`). Click Apply.
 
-![IAC Driver setup](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
+![IAC Driver setup](https://github.com/user-attachments/assets/498d813f-145c-415b-92e4-6c1e8fc61733)
 
-![IAC Driver port](https://github.com/user-attachments/assets/498d813f-145c-415b-92e4-6c1e8fc61733)
+![IAC Driver port](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
 
 ### Accessibility permission
 

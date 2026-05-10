@@ -149,7 +149,7 @@ Copy that `https://…trycloudflare.com` URL — you'll use it in the next step.
 
 ### Add the server in Claude.ai
 
-1. Go to **claude.ai/customize/connectors**.
+1. Go to **[claude.ai/customize/connectors](https://claude.ai/customize/connectors)**.
 
 ![Claude.ai Connectors](https://github.com/user-attachments/assets/2bfbcc68-e069-4bf8-9491-0d3c80056002)
 

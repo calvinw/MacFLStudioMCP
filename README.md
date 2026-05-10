@@ -65,16 +65,24 @@ System Settings → Privacy & Security → Accessibility → enable your termina
 app (e.g. iTerm2, Terminal) **and** Claude Code. Without this `pynput` cannot
 send `Cmd+Opt+Y` and piano-roll edits will silently fail.
 
-## FL Studio activation (each launch)
+## FL Studio activation
+
+### One-time MIDI setup
 
 1. Launch FL Studio 2025.
 2. **Options → MIDI Settings → Input**: find the `fLMCP` IAC Driver row. Set
    **Controller type** = `fLMCP Bridge`, **Port** = 1, click **Enable**.
 3. **Options → MIDI Settings → Output**: same `fLMCP` row, Port = 1.
-4. Open FL's script output (**View → Script output**) and confirm you see
+
+FL remembers these settings — you only need to do this once.
+
+### Each launch
+
+1. Open FL's script output (**View → Script output**) and confirm you see
    `[fLMCP] bridge ready`.
-5. Open any piano roll, click the **scripts dropdown** (top-right corner), and
-   click **ComposeWithLLM**. Repeat this step each time you relaunch FL.
+2. Open any piano roll, click the **scripts dropdown** (top-right corner), and
+   click **ComposeWithLLM**. FL forgets this on quit, so repeat each time you
+   relaunch FL.
 
 ## Using with Claude Code (stdio)
 

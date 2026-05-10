@@ -27,7 +27,7 @@ echo "  ✓ fLMCP_request.json + fLMCP_state.json initialized"
 
 echo ""
 echo "Setting up Python venv..."
-[ -d "$SCRIPT_DIR/.venv" ] || python3 -m venv "$SCRIPT_DIR/.venv"
+python3 -m venv "$SCRIPT_DIR/.venv"
 "$SCRIPT_DIR/.venv/bin/pip" install -q -e "$SCRIPT_DIR"[mac]
 echo "  ✓ .venv ready and fl-studio-mcp[mac] installed"
 

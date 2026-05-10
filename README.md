@@ -116,7 +116,7 @@ run this in a terminal window and keep it running while using the MCP server:
 .venv/bin/python -m fl_studio_mcp --transport http --port 8000
 ```
 
-### Expose the server
+### Setting up Cloudflared to Tunnel Your Mac to Claude.ai
 
 Claude.ai runs in the cloud and cannot reach `127.0.0.1` directly. We use
 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)

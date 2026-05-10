@@ -145,6 +145,52 @@ System Settings → Privacy & Security → Accessibility → enable your termina
 app (e.g. iTerm2, Terminal) **and** Claude Code. Without this `pynput` cannot
 send `Cmd+Opt+Y` and piano-roll edits will silently fail.
 
+## Using with Claude.ai
+
+Claude.ai (the web interface) connects to MCP servers over HTTP rather than
+stdio. The server ships with an HTTP transport option for this.
+
+### 1. Start the server in HTTP mode
+
+```bash
+.venv/bin/python -m fl_studio_mcp --transport http --port 8000
+```
+
+The server listens on `http://127.0.0.1:8000` by default. Keep this terminal
+open — it must stay running for Claude.ai to reach the server.
+
+### 2. Expose the server (if needed)
+
+Claude.ai runs in the cloud, so `127.0.0.1` is not reachable from it directly.
+You need a tunnel to your machine. [ngrok](https://ngrok.com) is the simplest
+option:
+
+```bash
+ngrok http 8000
+```
+
+Copy the `https://…ngrok-free.app` URL it prints — you'll use it in the next
+step.
+
+> **Security note:** the tunnel exposes your FL Studio instance to anyone who
+> knows the URL. Use ngrok's free auth token (or a paid plan with IP allowlist)
+> to restrict access.
+
+### 3. Add the server in Claude.ai
+
+1. Go to **claude.ai → Settings → Integrations** (or the MCP panel, depending
+   on your plan).
+2. Click **Add MCP server**.
+3. Enter the ngrok URL (e.g. `https://abc123.ngrok-free.app`) as the server URL.
+4. Save. Claude.ai will probe the endpoint and list the available tools.
+
+### 4. Verify
+
+Ask Claude: *"Ping the FL Studio bridge."* It should respond with the bridge
+info and a round-trip latency around 25–50 ms.
+
+---
+
 ## Quick check
 
 ```bash

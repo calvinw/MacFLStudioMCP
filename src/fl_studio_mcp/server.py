@@ -1,13 +1,16 @@
 """fl-studio-mcp — FastMCP entry point.
 
 Run with:
-    python -m fl_studio_mcp
+    python -m fl_studio_mcp                        # stdio (default)
+    python -m fl_studio_mcp --transport http       # streamable-http on port 8000
+    python -m fl_studio_mcp --transport http --port 9000 --host 127.0.0.1
 or:
     fl-studio-mcp
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -59,7 +62,7 @@ logging.basicConfig(
 log = logging.getLogger("fl_studio_mcp")
 
 
-def build_app() -> FastMCP:
+def build_app(host: str = "127.0.0.1", port: int = 8000) -> FastMCP:
     mcp = FastMCP(
         "fl-studio-mcp",
         instructions=(
@@ -69,6 +72,8 @@ def build_app() -> FastMCP:
             "fail with 'bridge unavailable', ensure FL Studio is running and the fLMCP Bridge MIDI "
             "device is enabled under Options > MIDI Settings > Input with an IAC Driver port."
         ),
+        host=host,
+        port=port,
     )
 
     # tool modules
@@ -104,8 +109,22 @@ def build_app() -> FastMCP:
 
 
 def main() -> None:
-    app = build_app()
-    app.run()
+    parser = argparse.ArgumentParser(description="FL Studio MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport to use (default: stdio)",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Host for HTTP transport (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8000, help="Port for HTTP transport (default: 8000)")
+    args = parser.parse_args()
+
+    app = build_app(host=args.host, port=args.port)
+    if args.transport == "http":
+        app.run(transport="streamable-http")
+    else:
+        app.run()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ This file gives any future Claude session enough context to be useful immediatel
 3. **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
 4. **After any code change to the MCP server, tell the user to restart it.** The server runs as a persistent process; changes to `src/fl_studio_mcp/` are not picked up until restart. In Claude Code: `/mcp` → restart `fl-studio-mcp`, or start a fresh session.
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
-6. **Piano roll workflow is mandatory** — read → plan → write (plural) → confirm. See the dedicated section below.
+6. **Piano roll workflow is mandatory** — use the `compose` skill. It enforces read → plan → write (plural) → confirm.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
 8. **Channel mute workflow is mandatory during edits** — mute all other channels before editing one, restore when done. See the dedicated section below.
 
@@ -204,30 +204,6 @@ tests/
 The user can hear each channel in isolation as it is being edited, without other parts masking or interfering. Never leave channels in a different mute state than they were in at the start of the session — always restore.
 
 ---
-
-## Piano roll edit workflow — MANDATORY
-
-**Always follow this sequence. Do not skip steps.**
-
-1. **Full sweep read first** — `piano_roll_read_patterns_autolocate()` (all patterns, no args) before any edit session, even if you think you know the state. This is mandatory at the start of every edit session.
-   - If you already know which pattern will be edited first, pass `navigate_after_pattern=<index>` (and `navigate_after_channel=<index>` if known). FL will land on the edit target immediately after the sweep, so the UI shows the right pattern while you plan.
-2. **Plan** — derive notes from the read data. Never invent from memory or a previous session.
-3. **Write with `piano_roll_write_patterns`** (plural) — pass all writes as a single list. Do **not** call `piano_roll_write_pattern` (singular) in a loop — it fires a separate Cmd+Opt+Y per write.
-4. **FL stays on last edited pattern/channel** — `restore_start` defaults to `False` on all read and write tools. Do not pass `restore_start=True` unless there is a specific reason to jump back.
-5. **Confirm** — call `piano_roll_read_patterns_autolocate()` again if there is any doubt.
-
-### Why this matters
-
-- `restore_start=False` (the default) means FL stays wherever the last write/read left it — no visible jumping back.
-- `restore_start=True` can still be passed explicitly when a caller genuinely needs FL to return to a specific pattern.
-- Skipping the full sweep read means writing notes from stale/imagined state.
-- Piano-roll writes share one file bus (`fLMCP_request.json`) and one `Cmd+Opt+Y` — **no parallel writes**.
-
-### When to do a full sweep vs. targeted read
-
-- **Before any edit session** — always full sweep (`piano_roll_read_patterns_autolocate()` with no args).
-- **After edits** — only re-read the patterns you changed, or re-read all if something looks wrong.
-- **No need to re-read** if you just wrote notes and the write returned `ok=True` with the expected `note_count`.
 
 ## Development rules
 

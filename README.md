@@ -36,8 +36,8 @@ without a paid subscription.
 ## Install
 
 ```bash
-git clone https://github.com/calvinw/MacFLStudioMCP.git fLMCP
-cd fLMCP
+git clone https://github.com/calvinw/MacFLStudioMCP.git
+cd MacFLStudioMCP
 ./install_mac.sh
 ```
 

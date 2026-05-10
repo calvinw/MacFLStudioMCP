@@ -88,14 +88,15 @@ send `Cmd+Opt+Y` and piano-roll edits will silently fail.
 
 ![MIDI Settings](https://github.com/user-attachments/assets/531e0c61-f0cb-4c2d-bd0e-0a045c308cb7)
 
+4. To confirm everything is working, go to **View → Script Output** and look for
+   `[fLMCP] bridge ready`.
+
 FL remembers these settings — you only need to do this once.
 
 ### Each launch
 
 1. Start FL Studio.
-2. To check everything is ready, go to **View → Script Output** and look for
-   `[fLMCP] bridge ready`.
-3. Open the Piano Roll editor window, click the **scripts dropdown** (top-left
+2. Open the Piano Roll editor window, click the **scripts dropdown** (top-left
    corner), and choose **ComposeWithLLM**. You need to do this before working
    with the LLM. FL forgets this on quit, so repeat each time you relaunch FL.
 

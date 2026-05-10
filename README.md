@@ -117,9 +117,17 @@ run this in a terminal window and keep it running while using the MCP server:
 
 ### Expose the server
 
-Claude.ai runs in the cloud and cannot reach `127.0.0.1` directly. Use
+Claude.ai runs in the cloud and cannot reach `127.0.0.1` directly. We use
 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
-to create a free tunnel with a random public URL — no account required:
+to create a free tunnel with a random public URL — no account required.
+
+Install cloudflared if you haven't already:
+
+```bash
+brew install cloudflared
+```
+
+Then run the tunnel in a second terminal window and keep it running:
 
 ```bash
 cloudflared tunnel --url http://localhost:8000

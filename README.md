@@ -61,6 +61,8 @@ The installer:
 3. Double-click **IAC Driver** → check **Device is online** → add a port named
    `fLMCP` (rename the default `Bus 1`). Click Apply.
 
+![IAC Driver setup](https://github.com/user-attachments/assets/2d0482d8-d2a6-4e33-b0c8-a429515c88d5)
+
 ### Accessibility permission
 
 System Settings → Privacy & Security → Accessibility → enable your terminal

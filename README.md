@@ -101,15 +101,8 @@ FL remembers these settings — you only need to do this once.
 
 ## Using with Claude Code (stdio)
 
-The installer registers the server via `claude mcp add`. Restart Claude Code
-to pick it up, then verify:
-
-```bash
-.venv/bin/python scripts/smoke_test_mac.py
-```
-
-Expected output: project metadata, transport status, the first few channels /
-mixer tracks / patterns, and a round-trip latency around 25–50 ms.
+The installer registers the server via `claude mcp add`. Once installed, just
+start Claude Code as normal — the FL Studio MCP server will be available automatically.
 
 ## Using with Claude.ai (HTTP)
 

@@ -4,7 +4,7 @@
     "fl-studio-mcp": {
       "type": "local",
       "command": [
-        "/Users/calvinw/develop/FLStudioMCP/.venv/bin/python",
+        ".venv/bin/python",
         "-m",
         "fl_studio_mcp"
       ],

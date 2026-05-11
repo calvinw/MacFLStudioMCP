@@ -1105,7 +1105,6 @@ def _pl_info(i):
         "color": _int_to_color_hex(_safe(playlist.getTrackColor, i) or 0),
         "is_muted": _safe(playlist.isTrackMuted, i) == 1,
         "is_solo": _safe(playlist.isTrackSolo, i) == 1,
-        "height": _safe(playlist.getTrackHeight, i),
     }
 
 

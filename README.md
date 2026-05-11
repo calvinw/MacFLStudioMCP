@@ -113,7 +113,7 @@ server (or connector). Make sure you are in the `MacFLStudioMCP` folder, then
 run this in a terminal window and keep it running while using the MCP server:
 
 ```bash
-.venv/bin/python -m fl_studio_mcp --transport http --port 8000
+.venv/bin/python -m fl_studio_mcp --transport http --port 8000 --host 0.0.0.0
 ```
 
 ### Setting up Cloudflared to Tunnel Your Mac to Claude.ai

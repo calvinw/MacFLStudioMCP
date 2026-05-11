@@ -2,8 +2,8 @@
 
 Run with:
     python -m fl_studio_mcp                        # stdio (default)
-    python -m fl_studio_mcp --transport http       # streamable-http on port 8000
-    python -m fl_studio_mcp --transport http --port 9000 --host 127.0.0.1
+    python -m fl_studio_mcp --transport http --host 0.0.0.0        # streamable-http on port 8000 (use 0.0.0.0 for tunnel access)
+    python -m fl_studio_mcp --transport http --port 9000 --host 0.0.0.0
 or:
     fl-studio-mcp
 """

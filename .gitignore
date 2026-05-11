@@ -48,6 +48,9 @@ Desktop.ini
 
 # --- Local agent / tool config (may contain absolute paths) --------------
 .claude/
+!.claude/
+.claude/*
+!.claude/skills/
 .cursor/
 .codeium/
 .aider*

@@ -7,7 +7,7 @@ This file gives any future Claude session enough context to be useful immediatel
 
 ## Cold-start checklist (read this first every session)
 
-1. This is a macOS FL Studio MCP server. The remote is `https://github.com/calvinw/FLStudioMCP.git` (already configured).
+1. This is a macOS FL Studio MCP server. The remote is `https://github.com/calvinw/MacFLStudioMCP.git` (already configured).
 2. Everything is committed and pushed. Start by running `git status` to see if there are any uncommitted local changes.
 3. **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
 4. **After any code change to the MCP server, tell the user to restart it.** The server runs as a persistent process; changes to `src/fl_studio_mcp/` are not picked up until restart. In Claude Code: `/mcp` → restart `fl-studio-mcp`, or start a fresh session.
@@ -258,4 +258,4 @@ cd /Users/calvinw/develop/FLStudioMCP
 - **FL jumping back to original pattern/channel after reads and writes** — fixed. `restore_start` now defaults to `False` on all three piano roll tools. FL stays on the last edited/read pattern. Pass `restore_start=True` explicitly only when a deliberate jump-back is needed.
 - **Duplicate PRForm crash** — always pass `new_window=0` to `openEventEditor` when piano roll is already visible.
 - **Generator tools removed** — LLM computes music theory natively; `gen_*` tools were redundant wrappers.
-- **Fork remote** — `origin` now points at `https://github.com/calvinw/FLStudioMCP.git`.
+- **Fork remote** — `origin` now points at `https://github.com/calvinw/MacFLStudioMCP.git`.

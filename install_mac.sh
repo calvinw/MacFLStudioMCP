@@ -84,10 +84,16 @@ echo "  Using $PYTHON ($("$PYTHON" --version))"
 # Remove stale venv if it was built with a different Python (e.g. after a
 # failed first run with the wrong Python version).
 if [ -d "$SCRIPT_DIR/.venv" ]; then
-  existing=$("$SCRIPT_DIR/.venv/bin/python" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null || echo "False")
-  if [ "$existing" != "True" ]; then
-    echo "  Removing stale .venv (wrong Python version)..."
+  venv_python="$SCRIPT_DIR/.venv/bin/python"
+  if [ ! -x "$venv_python" ]; then
+    echo "  Removing stale .venv (broken interpreter)..."
     rm -rf "$SCRIPT_DIR/.venv"
+  else
+    existing=$("$venv_python" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null || echo "False")
+    if [ "$existing" != "True" ]; then
+      echo "  Removing stale .venv (wrong Python version)..."
+      rm -rf "$SCRIPT_DIR/.venv"
+    fi
   fi
 fi
 

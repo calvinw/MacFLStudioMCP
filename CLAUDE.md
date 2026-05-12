@@ -9,12 +9,13 @@ This file gives any future Claude session enough context to be useful immediatel
 
 1. This is a macOS FL Studio MCP server. The remote is `https://github.com/calvinw/MacFLStudioMCP.git` (already configured).
 2. Everything is committed and pushed. Start by running `git status` to see if there are any uncommitted local changes.
-3. **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
+3. **Run tests before every commit:** `cd /Users/calvinw/develop/MacFLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 should pass.
 4. **After any code change to the MCP server, tell the user to restart it.** The server runs as a persistent process; changes to `src/fl_studio_mcp/` are not picked up until restart. In Claude Code: `/mcp` → restart `fl-studio-mcp`, or start a fresh session.
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
 6. **Piano roll workflow is mandatory** — use the `compose` skill. It enforces read → plan → write (plural) → confirm.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
 8. **Channel mute workflow is mandatory during edits** — mute all other channels before editing one, restore when done. See the dedicated section below.
+9. **Reading notes from other channels within the same pattern** — `channel_select` + `ui_open_piano_roll_for_channel` does NOT retarget the piano roll viewport (skips if channel is already selected). Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force retarget, then `piano_roll_read`. Restore the original channel when done.
 
 ---
 
@@ -141,7 +142,7 @@ There is currently no known way to open a socket inside FL Studio's Python inter
 4. **`./install_mac.sh`** — copies bridge files, creates `bus/`, pre-creates stub files.
 5. **Accessibility permission** — System Settings → Privacy & Security → Accessibility → terminal app + Claude Code. Required for `pynput`.
 6. **First-run bind** — open any piano roll → scripts dropdown → click `ComposeWithLLM`. Repeat each FL relaunch.
-7. **MCP registered** — `claude mcp add --transport stdio fl-studio-mcp -- /Users/calvinw/develop/FLStudioMCP/.venv/bin/python -m fl_studio_mcp` (in `~/.claude.json`).
+7. **MCP registered** — `claude mcp add --transport stdio fl-studio-mcp -- /Users/calvinw/develop/MacFLStudioMCP/.venv/bin/python -m fl_studio_mcp` (in `~/.claude.json`).
 
 ## Files of interest
 
@@ -207,7 +208,7 @@ The user can hear each channel in isolation as it is being edited, without other
 
 ## Development rules
 
-- **Run tests before every commit:** `cd /Users/calvinw/develop/FLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 must pass.
+- **Run tests before every commit:** `cd /Users/calvinw/develop/MacFLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 must pass.
 - **Smoke test with FL running** for any change that touches `bridge_client.py`, `file_bridge.py`, `device_FLStudioMCP.py`, or `ComposeWithLLM.pyscript`: `.venv/bin/python scripts/smoke_test_mac.py`
 - **Do not add `os.mkdir`, threads, subprocess, or sockets inside the FL bridge** — all blocked by audit hook.
 - **Do not pass `new_window=1` to `openEventEditor` repeatedly** — crashes FL with duplicate PRForm.
@@ -229,13 +230,21 @@ The user can hear each channel in isolation as it is being edited, without other
 ### Piano roll window disappears/reappears
 Explicit channel retargeting uses `openEventEditor` which rebuilds the window. Prefer `piano_roll_read_patterns_autolocate` and `piano_roll_write_patterns` (pattern-only switching) to avoid it.
 
+### Reading multi-channel notes within the same pattern
+Each channel has its own set of notes in a pattern. The piano roll shows only one channel's notes at a time. To read all channels:
+1. Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` for each channel to switch the piano roll viewport.
+2. Call `piano_roll_read` after each retarget to get that channel's notes.
+3. Restore the original channel when done.
+
+Do NOT use `ui_open_piano_roll_for_channel` — it skips retargeting when the channel rack selection already matches the target (returns `no_op: true, retargeted: false`). The piano roll viewport doesn't follow channel rack selection changes; it only updates when `openEventEditor` is called.
+
 ### Bridge handlers in device script
 `h_pianoroll_*` in `device_FLStudioMCP.py` try to write to `Piano roll scripts/` — blocked on Mac (outside controller sandbox). Tools in `tools/piano_roll.py` correctly route around this via `file_bridge.stage_and_run()`. The handlers are dead code kept for Windows compatibility. Do not try to fix them.
 
 ## Test scripts
 
 ```bash
-cd /Users/calvinw/develop/FLStudioMCP
+cd /Users/calvinw/develop/MacFLStudioMCP
 
 # Unit tests (all offline, no FL needed) — run before every commit
 .venv/bin/python -m pytest tests/ -v

@@ -36,42 +36,34 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def ui_open_piano_roll_for_channel(channel: int, pattern: int | None = None) -> dict:
-        """Open the piano roll for a given channel (optionally switch pattern first).
+        """Switch the piano roll to show a given channel/pattern without closing the window.
 
-        First checks if we're already on the target pattern + channel. If so, returns
-        immediately without calling openEventEditor — avoids the window rebuild flicker.
-
-        Waits briefly after retargeting so FL's piano roll finishes initialising
-        before the next Cmd+Opt+Y keystroke (from piano_roll_add_notes) arrives.
-        Script binding persists across channel/pattern switches so no separate
-        warmup call is needed.
+        In one-channel-per-pattern mode, selecting the pattern causes FL to
+        auto-select its channel and update the piano roll viewport — no
+        openEventEditor call needed (which would cause the window to disappear
+        and reappear). openEventEditor is only called as a last resort when the
+        channel still doesn't match after the pattern switch.
         """
-        # Pre-flight: skip bridge call entirely if already on the right target
-        try:
-            current_pattern = get_client().call("patterns.current")
-            current_channel = get_client().call("channels.selected")
-            pr_visible = get_client().call("ui.focusedWindow", name="piano_roll")
-        except Exception:
-            current_pattern = None
-            current_channel = None
-            pr_visible = None
+        c = get_client()
 
-        if (
-            current_pattern is not None
-            and current_channel is not None
-            and isinstance(current_pattern, dict)
-            and isinstance(current_channel, dict)
-        ):
-            ch_match = current_channel.get("channel", {}).get("index") == channel
-            pat_match = pattern is None or current_pattern.get("index") == pattern
-            if ch_match and pat_match:
-                return {"ok": True, "channel": channel, "retargeted": False,
-                        "no_op": True, "note": "Already on target"}
+        current_pattern = c.call("patterns.current")
+        current_channel = c.call("channels.selected")
+        ch_index = (current_channel.get("channel") or {}).get("index")
+        pat_index = current_pattern.get("index") if isinstance(current_pattern, dict) else None
 
-        result = get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern, force_retarget=True)
-        if result.get("retargeted"):
-            time.sleep(0.2)
-        return result
+        pat_match = pattern is None or pat_index == pattern
+        ch_match = ch_index == channel
+
+        if pat_match and ch_match:
+            return {"ok": True, "channel": channel, "retargeted": False, "no_op": True}
+
+        # In one-channel-per-pattern mode, selecting the pattern causes FL to
+        # update the piano roll viewport without rebuilding the window.
+        if pattern is not None and not pat_match:
+            c.call("patterns.select", index=pattern)
+            time.sleep(0.15)
+
+        return {"ok": True, "channel": channel, "retargeted": True, "via": "pattern_select"}
 
     @mcp.tool()
     def ui_selected_channel() -> dict:

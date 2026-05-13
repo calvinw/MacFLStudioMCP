@@ -32,7 +32,6 @@ from pydantic import BaseModel
 from ..bridge_client import get_client
 from ..file_bridge import stage_and_run
 
-
 class PianoRollNote(BaseModel):
     midi: int
     time_bars: float | None = None
@@ -48,27 +47,27 @@ def _bars_to_quarters(bars: float) -> float:
 
 
 def _ensure_piano_roll_on_target(c, channel: int, pattern: int | None = None) -> bool:
-    """Skip openEventEditor if already on target — avoids window rebuild flicker."""
-    try:
-        current_pattern = c.call("patterns.current")
-        current_channel = c.call("channels.selected")
-    except Exception:
-        current_pattern = None
-        current_channel = None
+    """Switch the piano roll viewport to the target channel+pattern.
 
-    if (
-        current_pattern is not None
-        and current_channel is not None
-        and isinstance(current_pattern, dict)
-        and isinstance(current_channel, dict)
-    ):
-        ch_match = current_channel.get("channel", {}).get("index") == channel
-        pat_match = pattern is None or current_pattern.get("index") == pattern
-        if ch_match and pat_match:
-            return False
+    In one-channel-per-pattern mode, patterns.select causes FL to auto-select
+    the pattern's channel in the channel rack. We check channels.selected AFTER
+    the pattern switch — if it already matches the target channel, the piano roll
+    viewport is already correct and we can skip openEventEditor (which causes the
+    window flash). openEventEditor is only called when the channel still doesn't
+    match after the pattern switch.
+    """
+    current_pattern = c.call("patterns.current")
+    if pattern is not None and current_pattern.get("index") != pattern:
+        c.call("patterns.select", index=pattern)
+        time.sleep(0.2)
 
-    c.call("ui.openPianoRoll", channel=channel, pattern=pattern, force_retarget=True)
-    time.sleep(0.25)
+    sel = c.call("channels.selected")
+    current_channel = (sel.get("channel") or {}).get("index")
+    if current_channel != channel:
+        result = c.call("ui.openPianoRoll", channel=channel, force_retarget=True)
+        if result.get("retargeted"):
+            time.sleep(0.25)
+
     return True
 
 
@@ -179,7 +178,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def piano_roll_read_patterns_autolocate(patterns_to_read: list[int] | None = None,
-                                           restore_start: bool = False,
+                                           restore_start: bool = True,
                                            navigate_after_pattern: int | None = None,
                                            navigate_after_channel: int | None = None) -> dict:
         """Read notes across patterns using FL's auto-located piano-roll channel.
@@ -362,16 +361,8 @@ def register(mcp: FastMCP) -> None:
             pattern = int(entry["pattern"])
             raw_notes = entry.get("notes", [])
 
-            # Use pattern/channel select only (no openEventEditor) to avoid window rebuild flicker.
-            # ComposeWithLLM operates on the selected pattern/channel, not the viewport.
-            current_pattern = c.call("patterns.current")
-            if current_pattern.get("index") != pattern:
-                c.call("patterns.select", index=pattern)
-                time.sleep(0.2)
-            current_channel = c.call("channels.selected")
-            if (current_channel.get("channel") or {}).get("index") != channel:
-                c.call("channels.select", index=channel)
-                time.sleep(0.1)
+            # Force the piano roll viewport to the target channel+pattern
+            _ensure_piano_roll_on_target(c, channel, pattern)
 
             pyscript_notes = []
             for n in raw_notes:

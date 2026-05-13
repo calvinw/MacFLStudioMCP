@@ -206,6 +206,8 @@ This happens when `openEventEditor` is called via `force_retarget`. For one-chan
 
 ### Reading notes — two cases
 
+**There is no FL API to auto-detect which case applies.** The LLM must ask the user or be told upfront.
+
 Reading notes boils down to two distinct cases depending on how many channels have notes in each pattern.
 
 #### Case 1: One channel per pattern (typical for sequenced projects)
@@ -261,6 +263,16 @@ fl_call_raw("ui.openPianoRoll", {"channel": original_ch})
 **Trade-off:** `fl_call_raw("ui.openPianoRoll", ...)` calls `openEventEditor` every time, which causes a brief piano roll window rebuild (flicker). This is unavoidable — there's no way to change the viewport without it. The `piano_roll_read_patterns_autolocate` tool exists specifically to avoid this flicker when you only need one channel per pattern.
 
 **When you know the layout up front:** Run `channel_all()` first to see which channels are non-empty in a pattern, then only retarget those.
+
+### Navigation — switching the piano roll to a specific channel
+
+To move the piano roll view to a specific channel without doing a read, use `fl_call_raw` directly:
+
+```python
+fl_call_raw("ui.openPianoRoll", {"channel": N})
+```
+
+This calls `openEventEditor` and always retargets the viewport immediately. Use it when the user asks to "go to" or "switch to" a channel, or before a targeted single-channel write when you already know the note count.
 
 ### Bridge handlers in device script
 `h_pianoroll_*` in `device_FLStudioMCP.py` try to write to `Piano roll scripts/` — blocked on Mac (outside controller sandbox). Tools in `tools/piano_roll.py` correctly route around this via `file_bridge.stage_and_run()`. The handlers are dead code kept for Windows compatibility. Do not try to fix them.

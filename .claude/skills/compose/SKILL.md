@@ -7,6 +7,45 @@ description: Guide through the mandatory FL Studio piano roll composition workfl
 
 You are guiding a composition session in FL Studio. Follow this **mandatory workflow** from CLAUDE.md:
 
+## Know Your Project Layout First
+
+Before reading, identify which case applies. **There is no API to auto-detect this — ask the user if unsure.**
+
+### Case 1: One channel per pattern
+Each pattern is owned by a single channel. The standard workflow below applies as-is.
+- Read: `piano_roll_read_patterns_autolocate()` sweeps all patterns automatically
+- Write: `piano_roll_write_patterns(writes=[...])`
+
+### Case 2: Multiple channels per pattern
+Several channels all have notes inside the same pattern. `piano_roll_read_patterns_autolocate` only reads whichever channel FL auto-selects when you switch patterns — you must retarget each channel manually:
+
+**Read sweep:**
+```python
+channels = channel_all()
+for ch_index in [0, 1, 2, ...]:
+    fl_call_raw("ui.openPianoRoll", {"channel": ch_index})
+    notes = piano_roll_read()
+    # store notes keyed by ch_index
+```
+
+**Write:** same `piano_roll_write_patterns` tool — pass all channel×pattern pairs in one call:
+```python
+piano_roll_write_patterns(writes=[
+  {channel: 0, pattern: 1, current_note_count: 12, notes: [...]},
+  {channel: 1, pattern: 1, current_note_count: 2,  notes: [...]},
+  {channel: 2, pattern: 1, current_note_count: 0,  notes: [...]},
+])
+```
+
+### Navigation (no read needed)
+To move the piano roll view to a specific channel without reading, use:
+```
+fl_call_raw("ui.openPianoRoll", {"channel": N})
+```
+This calls `openEventEditor` directly and always retargets the viewport immediately.
+
+---
+
 ## The Workflow (Non-Negotiable Order)
 
 ### 1️⃣ READ — Full sweep before any edits

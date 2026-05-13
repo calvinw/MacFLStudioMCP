@@ -38,17 +38,38 @@ def register(mcp: FastMCP) -> None:
     def ui_open_piano_roll_for_channel(channel: int, pattern: int | None = None) -> dict:
         """Open the piano roll for a given channel (optionally switch pattern first).
 
+        First checks if we're already on the target pattern + channel. If so, returns
+        immediately without calling openEventEditor — avoids the window rebuild flicker.
+
         Waits briefly after retargeting so FL's piano roll finishes initialising
         before the next Cmd+Opt+Y keystroke (from piano_roll_add_notes) arrives.
         Script binding persists across channel/pattern switches so no separate
         warmup call is needed.
         """
-        result = get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern)
+        # Pre-flight: skip bridge call entirely if already on the right target
+        try:
+            current_pattern = get_client().call("patterns.current")
+            current_channel = get_client().call("channels.selected")
+            pr_visible = get_client().call("ui.focusedWindow", name="piano_roll")
+        except Exception:
+            current_pattern = None
+            current_channel = None
+            pr_visible = None
+
+        if (
+            current_pattern is not None
+            and current_channel is not None
+            and isinstance(current_pattern, dict)
+            and isinstance(current_channel, dict)
+        ):
+            ch_match = current_channel.get("channel", {}).get("index") == channel
+            pat_match = pattern is None or current_pattern.get("index") == pattern
+            if ch_match and pat_match:
+                return {"ok": True, "channel": channel, "retargeted": False,
+                        "no_op": True, "note": "Already on target"}
+
+        result = get_client().call("ui.openPianoRoll", channel=channel, pattern=pattern, force_retarget=True)
         if result.get("retargeted"):
-            # Brief settle: give FL's piano roll time to finish initialising so
-            # the next Cmd+Opt+Y keystroke (from piano_roll_add_notes) isn't
-            # dropped. Script binding persists across channel/pattern switches so
-            # we don't need a separate export_only warmup call any more.
             time.sleep(0.2)
         return result
 

@@ -51,7 +51,7 @@ fl_piano_roll_write_patterns(writes=[
 **Options:**
 - Pass all writes as a single list
 - `clear_first=True` (default) — clears pattern before writing
-- `restore_start=False` (default) — FL stays on the last edited pattern. Do not pass `restore_start=True` unless you have a specific reason to jump back to the original pattern.
+- `restore_start=False` (default) — **leave this as default on writes** so FL stays on the pattern that was just edited, even if the user was viewing a different pattern before.
 
 **Why**: Singular calls fire separate Cmd+Opt+Y keystrokes per write. They race and corrupt the file bus. Plural is atomic.
 
@@ -101,8 +101,8 @@ User: "Add a C major chord progression to the Chords pattern"
 ## Critical Details
 
 ### `restore_start` behavior
-- `restore_start=False` (default) — FL stays wherever the last write/read left it. No visible jumping back.
-- `restore_start=True` — explicitly pass this only if you need FL to return to the original pattern after the operation.
+- **Reads: always pass `restore_start=True`** — after sweeping patterns to collect notes, FL must return to whatever pattern the user was viewing before. Never leave the user on a different pattern just because a read swept through it.
+- **Writes: leave `restore_start=False` (default)** — after editing a pattern, FL should stay on the pattern that was just edited, even if the user was on a different one when they made the request. The edit target is where the user's attention should go.
 - After a successful write, do not re-read patterns unless you want to verify the result or make additional changes.
 
 ### No parallel piano roll writes

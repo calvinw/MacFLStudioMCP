@@ -14,8 +14,7 @@ This file gives any future Claude session enough context to be useful immediatel
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
 6. **Piano roll workflow is mandatory** — use the `compose` skill. It enforces read → plan → write (plural) → confirm.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
-8. **Channel mute workflow is mandatory during edits** — mute all other channels before editing one, restore when done. See the dedicated section below.
-9. **Reading notes from other channels within the same pattern** — `channel_select` + `ui_open_piano_roll_for_channel` does NOT retarget the piano roll viewport (skips if channel is already selected). Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force retarget, then `piano_roll_read`. Restore the original channel when done.
+8. **Reading notes from other channels within the same pattern** — `channel_select` + `ui_open_piano_roll_for_channel` does NOT retarget the piano roll viewport (skips if channel is already selected). Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force retarget, then `piano_roll_read`. Restore the original channel when done.
 
 ---
 
@@ -181,31 +180,6 @@ tests/
 └── test_generators.py          # music theory unit tests (generators.py still importable)
 ```
 
-## Channel mute workflow — MANDATORY during edits
-
-**Always mute other channels before editing a channel, unmute when done.**
-
-### Editing a single channel
-
-1. Read all channel mute states (`channel_all`) so you know the current state.
-2. **Mute all channels except the one being edited** (`channel_mute` with `muted=True`).
-3. Make the edit (piano roll write, step sequence, etc.).
-4. **Unmute all channels** that were unmuted before you started.
-
-### Editing multiple channels sequentially
-
-1. Read all channel mute states.
-2. For each channel to edit:
-   - Mute all *other* channels.
-   - Make the edit.
-3. When all edits are done, **unmute every channel** that was unmuted before you started.
-
-### Why this matters
-
-The user can hear each channel in isolation as it is being edited, without other parts masking or interfering. Never leave channels in a different mute state than they were in at the start of the session — always restore.
-
----
-
 ## Development rules
 
 - **Run tests before every commit:** `cd /Users/calvinw/develop/MacFLStudioMCP && .venv/bin/python -m pytest tests/ -v` — all 15 must pass.
@@ -230,13 +204,57 @@ The user can hear each channel in isolation as it is being edited, without other
 ### Piano roll window disappears/reappears
 Explicit channel retargeting uses `openEventEditor` which rebuilds the window. Prefer `piano_roll_read_patterns_autolocate` and `piano_roll_write_patterns` (pattern-only switching) to avoid it.
 
-### Reading multi-channel notes within the same pattern
-Each channel has its own set of notes in a pattern. The piano roll shows only one channel's notes at a time. To read all channels:
-1. Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` for each channel to switch the piano roll viewport.
-2. Call `piano_roll_read` after each retarget to get that channel's notes.
-3. Restore the original channel when done.
+### Reading notes — two cases
 
-Do NOT use `ui_open_piano_roll_for_channel` — it skips retargeting when the channel rack selection already matches the target (returns `no_op: true, retargeted: false`). The piano roll viewport doesn't follow channel rack selection changes; it only updates when `openEventEditor` is called.
+Reading notes boils down to two distinct cases depending on how many channels have notes in each pattern.
+
+#### Case 1: One channel per pattern (typical for sequenced projects)
+
+Use `piano_roll_read_patterns_autolocate` — it's a single tool call that:
+1. Iterates through patterns using `patterns.select` (no piano roll window flicker).
+2. For each pattern, triggers `ComposeWithLLM` to export whatever channel is currently selected in that pattern.
+3. Reports which channel FL auto-selected per pattern.
+
+```python
+result = piano_roll_read_patterns_autolocate()
+# result.results[i].notes — all notes for that pattern's selected channel
+```
+
+No explicit retargeting needed. The piano roll viewport stays on whatever channel it was already on — the tool just reads what's there.
+
+#### Case 2: Multiple non-empty channels within the same pattern
+
+Each channel in a pattern has its own independent note set. The piano roll **viewport only shows one channel at a time**, and changing channel rack selection does NOT retarget it. This is the core problem.
+
+**Do NOT use** `ui_open_piano_roll_for_channel` — it always passes `force_retarget=false` (default), so when the channel rack selection already matches, it returns `no_op: true` without actually switching the piano roll viewport. The viewport only updates when `openEventEditor` is called.
+
+**Do use** `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force the retarget:
+
+```python
+# 1. Discover which channels exist in the project
+channels = channel_all()
+
+# 2. For each channel that might have notes in the target pattern:
+for ch in [0, 1, 2, ...]:  # 0-based channel indices
+    fl_call_raw("ui.openPianoRoll", {
+        "channel": ch,
+        "force_retarget": true
+    })
+    # ^ forces openEventEditor to rebuild the viewport for this channel
+    time.sleep(0.2)  # let the window settle
+    notes = piano_roll_read()
+    # store notes for channel ch
+
+# 3. Restore to the original channel
+fl_call_raw("ui.openPianoRoll", {
+    "channel": original_ch,
+    "force_retarget": true
+})
+```
+
+**Trade-off:** `force_retarget=true` calls `openEventEditor` every time, which causes a brief piano roll window rebuild (flicker). This is unavoidable — there's no way to change the viewport without it. The `piano_roll_read_patterns_autolocate` tool exists specifically to avoid this flicker when you only need one channel per pattern.
+
+**When you know the layout up front:** Run `channel_all()` first to see which channels are non-empty in a pattern, then only retarget those.
 
 ### Bridge handlers in device script
 `h_pianoroll_*` in `device_FLStudioMCP.py` try to write to `Piano roll scripts/` — blocked on Mac (outside controller sandbox). Tools in `tools/piano_roll.py` correctly route around this via `file_bridge.stage_and_run()`. The handlers are dead code kept for Windows compatibility. Do not try to fix them.
@@ -264,7 +282,8 @@ cd /Users/calvinw/develop/MacFLStudioMCP
 - **TCP sockets on Mac** — blocked by audit hook. File-bus is the current approach; no known workaround.
 - **Notes wiped during end-of-edit cycle** — fixed. `stage_and_run` was appending to `fLMCP_request.json` instead of overwriting; stale `clear` actions accumulated. Fixed by using a single `_write_json()` call.
 - **FL jumping between patterns during multi-pattern write** — fixed. Use `piano_roll_write_patterns` (plural), not `piano_roll_write_pattern` (singular) in a loop.
-- **FL jumping back to original pattern/channel after reads and writes** — fixed. `restore_start` now defaults to `False` on all three piano roll tools. FL stays on the last edited/read pattern. Pass `restore_start=True` explicitly only when a deliberate jump-back is needed.
+- **Reads always restore to the original pattern** — always pass `restore_start=True` on read calls. After sweeping patterns to collect notes, FL must return to whatever pattern the user was viewing before.
+- **Writes stay on the edited pattern** — leave `restore_start=False` (default) on write calls. After editing a pattern, FL should land on that pattern even if the user was viewing a different one when they made the request.
 - **Duplicate PRForm crash** — always pass `new_window=0` to `openEventEditor` when piano roll is already visible.
 - **Generator tools removed** — LLM computes music theory natively; `gen_*` tools were redundant wrappers.
 - **Fork remote** — `origin` now points at `https://github.com/calvinw/MacFLStudioMCP.git`.

@@ -47,6 +47,31 @@ def _bars_to_quarters(bars: float) -> float:
     return bars * 4.0
 
 
+def _ensure_piano_roll_on_target(c, channel: int, pattern: int | None = None) -> bool:
+    """Skip openEventEditor if already on target — avoids window rebuild flicker."""
+    try:
+        current_pattern = c.call("patterns.current")
+        current_channel = c.call("channels.selected")
+    except Exception:
+        current_pattern = None
+        current_channel = None
+
+    if (
+        current_pattern is not None
+        and current_channel is not None
+        and isinstance(current_pattern, dict)
+        and isinstance(current_channel, dict)
+    ):
+        ch_match = current_channel.get("channel", {}).get("index") == channel
+        pat_match = pattern is None or current_pattern.get("index") == pattern
+        if ch_match and pat_match:
+            return False
+
+    c.call("ui.openPianoRoll", channel=channel, pattern=pattern, force_retarget=True)
+    time.sleep(0.25)
+    return True
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def piano_roll_status() -> dict:
@@ -257,10 +282,8 @@ def register(mcp: FastMCP) -> None:
         start_channel = c.call("channels.selected")
         start_pat_idx = start_pattern.get("index")
 
-        # Switch to target pattern + channel (same as autolocate writer)
-        c.call("patterns.select", index=pattern)
-        c.call("channels.select", index=channel)
-        time.sleep(0.25)
+        # Switch to target pattern + channel, force-retarget only if needed
+        _ensure_piano_roll_on_target(c, channel, pattern)
 
         # Convert bar-based notes to quarter-note times expected by pyscript
         pyscript_notes = []
@@ -339,9 +362,16 @@ def register(mcp: FastMCP) -> None:
             pattern = int(entry["pattern"])
             raw_notes = entry.get("notes", [])
 
-            c.call("patterns.select", index=pattern)
-            c.call("channels.select", index=channel)
-            time.sleep(0.25)
+            # Use pattern/channel select only (no openEventEditor) to avoid window rebuild flicker.
+            # ComposeWithLLM operates on the selected pattern/channel, not the viewport.
+            current_pattern = c.call("patterns.current")
+            if current_pattern.get("index") != pattern:
+                c.call("patterns.select", index=pattern)
+                time.sleep(0.2)
+            current_channel = c.call("channels.selected")
+            if (current_channel.get("channel") or {}).get("index") != channel:
+                c.call("channels.select", index=channel)
+                time.sleep(0.1)
 
             pyscript_notes = []
             for n in raw_notes:

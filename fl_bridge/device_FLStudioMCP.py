@@ -1472,38 +1472,12 @@ def h_ui_open_piano_roll(p):
     `ui.openEventEditor(event_id, mode=1, new_window=0|1)` where event_id comes
     from `channels.getRecEventId(channel)`. mode=1 means piano-roll editor.
 
-    Skip the retarget entirely when the requested channel + pattern already
-    match what the visible piano roll is showing — `openEventEditor` blanks
-    the viewport until the next script run, even when reopening the same
-    score, so doing a no-op retarget would force the user to re-trigger
-    ComposeWithLLM to see their notes again.
+    Always calls openEventEditor — no no-op shortcut. The MCP server side
+    (_ensure_piano_roll_on_target) decides when to call this based on whether
+    the target pattern is empty.
     """
     ch = int(p["channel"])
     requested_pattern = p.get("pattern")
-    force_retarget = p.get("force_retarget", False)
-
-    # Skip retargeting when FL is already showing the requested target. Calling
-    # openEventEditor for the current piano roll can visibly tear down/rebuild
-    # the window even though no target change is needed.
-    if not force_retarget:
-        try:
-            current_channel = channels.selectedChannel(canBeNone=True, indexGlobal=True)
-            current_pattern = patterns.patternNumber()
-            pr_visible = ui.getVisible(_WIN_IDS["piano_roll"]) == 1
-        except Exception:
-            current_channel = None
-            current_pattern = None
-            pr_visible = False
-
-        channel_matches = current_channel == ch
-        pattern_matches = requested_pattern is None or current_pattern == int(requested_pattern)
-        if pr_visible and channel_matches and pattern_matches:
-            try:
-                event_id = channels.getRecEventId(ch) + getattr(midi, "REC_Chan_PianoRoll", 0)
-            except Exception:
-                event_id = None
-            return {"ok": True, "channel": ch, "retargeted": False,
-                    "pattern": current_pattern, "event_id": event_id, "no_op": True}
 
     if requested_pattern is not None:
         patterns.jumpToPattern(int(requested_pattern))

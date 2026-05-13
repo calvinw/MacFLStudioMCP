@@ -46,32 +46,82 @@ def _bars_to_quarters(bars: float) -> float:
     return bars * 4.0
 
 
-def _ensure_piano_roll_on_target(c, channel: int, pattern: int | None = None) -> bool:
+# Pattern index → note count, populated by read sweep and updated after writes.
+# Used to decide whether openEventEditor is needed when switching patterns.
+_pattern_note_counts: dict[int, int] = {}
+
+
+def _is_pattern_empty(pattern: int) -> bool:
+    """Return True if pattern is known to be empty, or unknown (safe default)."""
+    return _pattern_note_counts.get(pattern, 0) == 0
+
+
+def _ensure_piano_roll_on_target(
+    c,
+    channel: int,
+    pattern: int | None = None,
+    current_note_count: int | None = None,
+) -> bool:
     """Switch the piano roll viewport to the target channel+pattern.
 
-    In one-channel-per-pattern mode, patterns.select causes FL to auto-select
-    the pattern's channel in the channel rack. We check channels.selected AFTER
-    the pattern switch — if it already matches the target channel, the piano roll
-    viewport is already correct and we can skip openEventEditor (which causes the
-    window flash). openEventEditor is only called when the channel still doesn't
-    match after the pattern switch.
+    If already on the target pattern, nothing to do.
+
+    For non-empty patterns: patterns.select is sufficient — FL auto-retargets
+    the piano roll viewport. No openEventEditor needed.
+
+    For empty patterns: openEventEditor is required to move the viewport.
+    Emptiness is determined from _pattern_note_counts (populated by the read
+    sweep). current_note_count is accepted for backwards compatibility and
+    overrides the cached value when provided.
     """
     current_pattern = c.call("patterns.current")
-    if pattern is not None and current_pattern.get("index") != pattern:
+    if pattern is not None and current_pattern.get("index") == pattern:
+        return True
+
+    note_count = current_note_count if current_note_count is not None else _pattern_note_counts.get(pattern, 0)
+    is_empty = note_count == 0
+
+    if is_empty:
+        c.call("channels.select", index=channel)
+
+    if pattern is not None:
         c.call("patterns.select", index=pattern)
         time.sleep(0.2)
 
-    sel = c.call("channels.selected")
-    current_channel = (sel.get("channel") or {}).get("index")
-    if current_channel != channel:
-        result = c.call("ui.openPianoRoll", channel=channel, force_retarget=True)
-        if result.get("retargeted"):
-            time.sleep(0.25)
+    if is_empty:
+        c.call("ui.openPianoRoll", channel=channel)
 
     return True
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.tool()
+    def piano_roll_goto(channel: int, pattern: int) -> dict:
+        """Navigate the piano roll viewport to a specific channel × pattern.
+
+        Always use this instead of pattern_select / channel_select directly.
+        Uses the sequence: channels.select → patterns.select → ui.openPianoRoll.
+        Does nothing if already on the target pattern.
+
+        Args:
+            channel: Channel rack index (0-based).
+            pattern: Pattern index (1-based, as returned by patterns.list).
+        """
+        c = get_client()
+        current_pattern = c.call("patterns.current")
+        if current_pattern.get("index") == pattern:
+            return {"ok": True, "pattern": current_pattern, "action": "already_there"}
+
+        is_empty = _is_pattern_empty(pattern)
+        if is_empty:
+            c.call("channels.select", index=channel)
+        c.call("patterns.select", index=pattern)
+        time.sleep(0.2)
+        if is_empty:
+            c.call("ui.openPianoRoll", channel=channel)
+        current = c.call("patterns.current")
+        return {"ok": True, "pattern": current, "channel": channel, "used_open_editor": is_empty}
+
     @mcp.tool()
     def piano_roll_status() -> dict:
         """Report whether the file-based piano-roll bridge is installed/reachable.
@@ -215,12 +265,14 @@ def register(mcp: FastMCP) -> None:
             read_result = stage_and_run([{"action": "export_only"}], wait_sec=5.0)
             selected_channel = c.call("channels.selected").get("channel")
             state = read_result.get("state") or {}
+            note_count = len(state.get("notes") or [])
+            _pattern_note_counts[pat["index"]] = note_count
             results.append({
                 "pattern": pat,
                 "channel": selected_channel,
                 "ok": bool(read_result.get("ok")),
                 "hotkey_sent": read_result.get("hotkey_sent"),
-                "note_count": len(state.get("notes") or []),
+                "note_count": note_count,
                 "notes": state.get("notes") or [],
             })
 
@@ -281,7 +333,6 @@ def register(mcp: FastMCP) -> None:
         start_channel = c.call("channels.selected")
         start_pat_idx = start_pattern.get("index")
 
-        # Switch to target pattern + channel, force-retarget only if needed
         _ensure_piano_roll_on_target(c, channel, pattern)
 
         # Convert bar-based notes to quarter-note times expected by pyscript
@@ -305,6 +356,8 @@ def register(mcp: FastMCP) -> None:
         actions.append({"action": "add_notes", "notes": pyscript_notes})
 
         write_result = stage_and_run(actions, wait_sec=5.0)
+        if write_result.get("ok"):
+            _pattern_note_counts[pattern] = len(pyscript_notes)
 
         # Restore starting pattern/channel
         restored = None
@@ -341,7 +394,9 @@ def register(mcp: FastMCP) -> None:
         original pattern/channel once at the very end.
 
         Args:
-            writes: List of {channel: int, pattern: int, notes: [{midi, time_bars, duration_bars, velocity}]}.
+            writes: List of {channel: int, pattern: int, notes: [...], current_note_count?: int}.
+                    Supply current_note_count from a prior read sweep to skip force_retarget for
+                    non-empty patterns. Omit or set to 0/None to always force_retarget (safe default).
             clear_first: Clear each pattern before writing (default True).
             restore_start: Restore the original pattern/channel after all writes (default False — stays on last edited).
 
@@ -360,9 +415,9 @@ def register(mcp: FastMCP) -> None:
             channel = int(entry["channel"])
             pattern = int(entry["pattern"])
             raw_notes = entry.get("notes", [])
+            current_note_count = entry.get("current_note_count")
 
-            # Force the piano roll viewport to the target channel+pattern
-            _ensure_piano_roll_on_target(c, channel, pattern)
+            _ensure_piano_roll_on_target(c, channel, pattern, current_note_count)
 
             pyscript_notes = []
             for n in raw_notes:
@@ -382,6 +437,8 @@ def register(mcp: FastMCP) -> None:
             actions.append({"action": "add_notes", "notes": pyscript_notes})
 
             write_result = stage_and_run(actions, wait_sec=5.0)
+            if write_result.get("ok"):
+                _pattern_note_counts[pattern] = len(pyscript_notes)
             results.append({
                 "channel": channel,
                 "pattern": pattern,

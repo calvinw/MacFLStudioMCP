@@ -43,8 +43,8 @@ Analyze the data you just read. Never invent from memory or prior sessions.
 
 ```
 fl_piano_roll_write_patterns(writes=[
-  {channel: 0, pattern: 1, notes: [...]},
-  {channel: 1, pattern: 1, notes: [...]},
+  {channel: 0, pattern: 1, current_note_count: 16, notes: [...]},
+  {channel: 1, pattern: 2, current_note_count: 0,  notes: [...]},
 ])
 ```
 
@@ -52,8 +52,13 @@ fl_piano_roll_write_patterns(writes=[
 - Pass all writes as a single list
 - `clear_first=True` (default) — clears pattern before writing
 - `restore_start=False` (default) — **leave this as default on writes** so FL stays on the pattern that was just edited, even if the user was viewing a different pattern before.
+- `current_note_count` — **always pass this from the read sweep**. It tells the write tool whether the piano roll viewport needs a `force_retarget` call:
+  - `> 0` → `patterns.select` is sufficient, no flicker
+  - `0` or omitted → `force_retarget` is called to move the piano roll to the correct (empty) channel
 
 **Why**: Singular calls fire separate Cmd+Opt+Y keystrokes per write. They race and corrupt the file bus. Plural is atomic.
+
+**Why `current_note_count` matters**: FL's `patterns.select` (jumpToPattern) only retargets the piano roll viewport when the target pattern has notes. For empty patterns, the piano roll stays on whatever channel was last open. There is no FL API to check note count without opening the piano roll — the read sweep is the only source of truth.
 
 ### 4️⃣ CONFIRM — Read again if uncertain
 
@@ -81,10 +86,10 @@ User: "Add a C major chord progression to the Chords pattern"
 
 3. WRITE:
    fl_piano_roll_write_patterns(writes=[
-     {channel: 0, pattern: 1, notes: [
+     {channel: 0, pattern: 1, current_note_count: 16, notes: [
        {midi: 36, time_bars: 0, duration_bars: 4, velocity: 0.8},
      ]},
-     {channel: 1, pattern: 1, notes: [
+     {channel: 1, pattern: 2, current_note_count: 0, notes: [
        {midi: 60, time_bars: 0, duration_bars: 1, velocity: 0.8},
        {midi: 64, time_bars: 1, duration_bars: 1, velocity: 0.8},
        {midi: 67, time_bars: 2, duration_bars: 1, velocity: 0.8},

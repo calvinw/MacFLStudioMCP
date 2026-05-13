@@ -14,7 +14,7 @@ This file gives any future Claude session enough context to be useful immediatel
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
 6. **Piano roll workflow is mandatory** — use the `compose` skill. It enforces read → plan → write (plural) → confirm.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
-8. **Reading notes from other channels within the same pattern** — `channel_select` + `ui_open_piano_roll_for_channel` does NOT retarget the piano roll viewport (skips if channel is already selected). Use `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force retarget, then `piano_roll_read`. Restore the original channel when done.
+8. **One-channel-per-pattern navigation** — always use `piano_roll_goto(channel, pattern)` to switch patterns. Never call `pattern_select` or `channel_select` directly for navigation. `piano_roll_goto` uses the correct sequence (channels.select → patterns.select → openPianoRoll for empty patterns only) and handles empty patterns automatically. If already on the target pattern, it does nothing.
 
 ---
 
@@ -202,7 +202,7 @@ tests/
 3. Piano roll open on wrong channel (use pattern-only switching via `piano_roll_read_patterns_autolocate`).
 
 ### Piano roll window disappears/reappears
-Explicit channel retargeting uses `openEventEditor` which rebuilds the window. Prefer `piano_roll_read_patterns_autolocate` and `piano_roll_write_patterns` (pattern-only switching) to avoid it.
+This happens when `openEventEditor` is called via `force_retarget`. For one-chan-per-pattern projects this only occurs when writing to an **empty pattern** — `patterns.select` is used otherwise. Pass `current_note_count` from a prior read sweep to minimise forced retargets.
 
 ### Reading notes — two cases
 
@@ -210,25 +210,37 @@ Reading notes boils down to two distinct cases depending on how many channels ha
 
 #### Case 1: One channel per pattern (typical for sequenced projects)
 
-Use `piano_roll_read_patterns_autolocate` — it's a single tool call that:
-1. Iterates through patterns using `patterns.select` (no piano roll window flicker).
-2. For each pattern, triggers `ComposeWithLLM` to export whatever channel is currently selected in that pattern.
-3. Reports which channel FL auto-selected per pattern.
+Use `piano_roll_read_patterns_autolocate` (read) and `piano_roll_write_patterns` (write).
+
+**How pattern switching works:**
+- `patterns.select` is sufficient when the pattern **has notes** — FL auto-selects the pattern's channel and the piano roll viewport follows. No flicker.
+- For **empty patterns**, `patterns.select` does NOT retarget the viewport. FL leaves the piano roll on whatever channel was last open. `_ensure_piano_roll_on_target` handles this by falling back to `force_retarget` automatically.
+
+**Optimal write flow** — pass `current_note_count` from a prior read sweep to skip `force_retarget` on non-empty patterns:
 
 ```python
-result = piano_roll_read_patterns_autolocate()
-# result.results[i].notes — all notes for that pattern's selected channel
+# 1. Read all patterns first
+read = piano_roll_read_patterns_autolocate()
+note_counts = {r["pattern"]["index"]: r["note_count"] for r in read["results"]}
+
+# 2. Write, passing current_note_count so empty patterns get force_retarget,
+#    non-empty patterns use patterns.select only (no flicker)
+piano_roll_write_patterns([
+    {"channel": 1, "pattern": 2, "current_note_count": note_counts.get(2, 0), "notes": [...]},
+])
 ```
 
-No explicit retargeting needed. The piano roll viewport stays on whatever channel it was already on — the tool just reads what's there.
+**There is no FL API to check a pattern's note count without opening it in the piano roll.** The read sweep (`piano_roll_read_patterns_autolocate`) is the only source of truth. Always read before writing.
+
+**Do not use `channels.selected` to infer piano roll state** — it reflects channel rack selection, which is unrelated to what the piano roll viewport is showing.
 
 #### Case 2: Multiple non-empty channels within the same pattern
 
 Each channel in a pattern has its own independent note set. The piano roll **viewport only shows one channel at a time**, and changing channel rack selection does NOT retarget it. This is the core problem.
 
-**Do NOT use** `ui_open_piano_roll_for_channel` — it always passes `force_retarget=false` (default), so when the channel rack selection already matches, it returns `no_op: true` without actually switching the piano roll viewport. The viewport only updates when `openEventEditor` is called.
+**Do NOT use** `ui_open_piano_roll_for_channel` — that tool never calls `openEventEditor`. For the multi-channel case (same pattern, different channel), it silently does nothing and returns a misleading `retargeted: True`. The viewport only updates when `openEventEditor` is called.
 
-**Do use** `fl_call_raw("ui.openPianoRoll", {"channel": N, "force_retarget": true})` to force the retarget:
+**Do use** `fl_call_raw("ui.openPianoRoll", {"channel": N})` to force the retarget:
 
 ```python
 # 1. Discover which channels exist in the project
@@ -236,23 +248,17 @@ channels = channel_all()
 
 # 2. For each channel that might have notes in the target pattern:
 for ch in [0, 1, 2, ...]:  # 0-based channel indices
-    fl_call_raw("ui.openPianoRoll", {
-        "channel": ch,
-        "force_retarget": true
-    })
-    # ^ forces openEventEditor to rebuild the viewport for this channel
+    fl_call_raw("ui.openPianoRoll", {"channel": ch})
+    # ^ calls openEventEditor to rebuild the viewport for this channel
     time.sleep(0.2)  # let the window settle
     notes = piano_roll_read()
     # store notes for channel ch
 
 # 3. Restore to the original channel
-fl_call_raw("ui.openPianoRoll", {
-    "channel": original_ch,
-    "force_retarget": true
-})
+fl_call_raw("ui.openPianoRoll", {"channel": original_ch})
 ```
 
-**Trade-off:** `force_retarget=true` calls `openEventEditor` every time, which causes a brief piano roll window rebuild (flicker). This is unavoidable — there's no way to change the viewport without it. The `piano_roll_read_patterns_autolocate` tool exists specifically to avoid this flicker when you only need one channel per pattern.
+**Trade-off:** `fl_call_raw("ui.openPianoRoll", ...)` calls `openEventEditor` every time, which causes a brief piano roll window rebuild (flicker). This is unavoidable — there's no way to change the viewport without it. The `piano_roll_read_patterns_autolocate` tool exists specifically to avoid this flicker when you only need one channel per pattern.
 
 **When you know the layout up front:** Run `channel_all()` first to see which channels are non-empty in a pattern, then only retarget those.
 

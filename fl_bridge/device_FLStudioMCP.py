@@ -84,6 +84,7 @@ _idle_tick = 0
 _last_tick_push = 0.0
 _bus_ready = False
 _event_count = 0
+_HUMAN_LOG_ENABLED = False  # set True to enable events.log (tail -f Hardware/fLMCP Bridge/events.log)
 
 
 # ----------------------------------------------------------------------------
@@ -178,7 +179,10 @@ def _emit_event(name, data):
 
 
 def _log_human(name, details=""):
-    """Append a human-readable event line to EVENTS_LOG. Best-effort, swallows errors."""
+    """Append a human-readable event line to EVENTS_LOG. Best-effort, swallows errors.
+    Enable by setting _HUMAN_LOG_ENABLED = True above."""
+    if not _HUMAN_LOG_ENABLED:
+        return
     global _event_count
     _event_count += 1
     try:

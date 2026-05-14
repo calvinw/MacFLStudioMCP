@@ -14,7 +14,8 @@ This file gives any future Claude session enough context to be useful immediatel
 5. **Generator tools (`gen_*`) are intentionally disabled.** Do not re-enable them. The LLM computes music theory directly and writes notes with `piano_roll_write_patterns`.
 6. **Piano roll workflow is mandatory** — use the `compose` skill. It enforces read → plan → write (plural) → confirm.
 7. **No parallel piano roll writes** — they share a single file bus and will race/corrupt.
-8. **One-channel-per-pattern navigation** — always use `piano_roll_goto(channel, pattern)` to switch patterns. Never call `pattern_select` or `channel_select` directly for navigation. `piano_roll_goto` uses the correct sequence (channels.select → patterns.select → openPianoRoll for empty patterns only) and handles empty patterns automatically. If already on the target pattern, it does nothing.
+8. **One-channel-per-pattern navigation** — always use `piano_roll_goto(channel, pattern)` to switch patterns. Never call `pattern_select` or `channel_select` directly for navigation. `piano_roll_goto` uses patterns.select for non-empty patterns (no flicker) and adds openEventEditor only for empty ones. If already on the target pattern, it does nothing.
+9. **Writes always call openEventEditor** — `_ensure_piano_roll_on_target` (used by `piano_roll_write_patterns`) always calls `channels.select` + `patterns.select` + `ui.openPianoRoll` regardless of whether the pattern is empty. With `new_window=0` this is a smooth viewport retarget — no window close/reopen. The `current_note_count` param is accepted for backwards compatibility but no longer used.
 
 ---
 
@@ -148,9 +149,15 @@ There is currently no known way to open a socket inside FL Studio's Python inter
 ```
 fl_bridge/
 ├── device_FLStudioMCP.py       # MIDI controller script — file-bus server (runs inside FL)
+│                               # also writes events.log (human-readable, tail -f it)
+├── event_investigator/
+│   └── device_EventInvestigator.py  # standalone event-logger controller (optional)
 └── piano_roll/
     ├── ComposeWithLLM.pyscript # piano-roll script — handles add_notes/clear/export_only
     └── fLMCP_bridge.pyscript   # legacy variant, also installed
+
+install_event_investigator.sh   # installs Event Investigator as a separate FL controller
+uninstall_event_investigator.sh # removes it
 
 src/fl_studio_mcp/
 ├── bridge_client.py            # file-bus RPC client
@@ -202,7 +209,7 @@ tests/
 3. Piano roll open on wrong channel (use pattern-only switching via `piano_roll_read_patterns_autolocate`).
 
 ### Piano roll window disappears/reappears
-This happens when `openEventEditor` is called via `force_retarget`. For one-chan-per-pattern projects this only occurs when writing to an **empty pattern** — `patterns.select` is used otherwise. Pass `current_note_count` from a prior read sweep to minimise forced retargets.
+This should no longer happen. `_ensure_piano_roll_on_target` always calls `openEventEditor` with `new_window=0`, which retargets the viewport smoothly without closing or reopening the window — equivalent to double-clicking a pattern in the Playlist. If you see the window close and reopen, check that `new_window=0` is still being passed in `h_ui_open_piano_roll`.
 
 ### Reading notes — two cases
 
@@ -214,21 +221,21 @@ Reading notes boils down to two distinct cases depending on how many channels ha
 
 Use `piano_roll_read_patterns_autolocate` (read) and `piano_roll_write_patterns` (write).
 
-**How pattern switching works:**
-- `patterns.select` is sufficient when the pattern **has notes** — FL auto-selects the pattern's channel and the piano roll viewport follows. No flicker.
-- For **empty patterns**, `patterns.select` does NOT retarget the viewport. FL leaves the piano roll on whatever channel was last open. `_ensure_piano_roll_on_target` handles this by falling back to `force_retarget` automatically.
+**How pattern switching works (reads):**
+- `piano_roll_read_patterns_autolocate` uses only `patterns.select` — no `openEventEditor`. For non-empty patterns FL auto-selects the channel and the piano roll follows. For empty patterns the viewport stays wherever it was, but since there are no notes to read, it correctly returns 0 notes. No flicker during reads.
 
-**Optimal write flow** — pass `current_note_count` from a prior read sweep to skip `force_retarget` on non-empty patterns:
+**How pattern switching works (writes):**
+- `_ensure_piano_roll_on_target` (called by `piano_roll_write_patterns`) always calls `channels.select` + `patterns.select` + `ui.openPianoRoll` (openEventEditor with `new_window=0`). This guarantees the piano roll viewport is on the correct channel before the pyscript fires — equivalent to double-clicking the pattern in the Playlist. With `new_window=0` there is no window close/reopen.
+
+**Write flow:**
 
 ```python
-# 1. Read all patterns first
+# 1. Read all patterns first (optional but good practice)
 read = piano_roll_read_patterns_autolocate()
-note_counts = {r["pattern"]["index"]: r["note_count"] for r in read["results"]}
 
-# 2. Write, passing current_note_count so empty patterns get force_retarget,
-#    non-empty patterns use patterns.select only (no flicker)
+# 2. Write — no current_note_count needed; openEventEditor is always called
 piano_roll_write_patterns([
-    {"channel": 1, "pattern": 2, "current_note_count": note_counts.get(2, 0), "notes": [...]},
+    {"channel": 1, "pattern": 2, "notes": [...]},
 ])
 ```
 
@@ -266,13 +273,15 @@ fl_call_raw("ui.openPianoRoll", {"channel": original_ch})
 
 ### Navigation — switching the piano roll to a specific channel
 
-To move the piano roll view to a specific channel without doing a read, use `fl_call_raw` directly:
+Use `piano_roll_goto(channel, pattern)` — it selects the pattern and, for empty patterns, also calls `openEventEditor` to force the viewport. This is the preferred navigation tool.
+
+For the multi-channel-per-pattern case where you need to force a viewport switch regardless of emptiness, use `fl_call_raw` directly:
 
 ```python
 fl_call_raw("ui.openPianoRoll", {"channel": N})
 ```
 
-This calls `openEventEditor` and always retargets the viewport immediately. Use it when the user asks to "go to" or "switch to" a channel, or before a targeted single-channel write when you already know the note count.
+This calls `openEventEditor` and always retargets the viewport immediately.
 
 ### Bridge handlers in device script
 `h_pianoroll_*` in `device_FLStudioMCP.py` try to write to `Piano roll scripts/` — blocked on Mac (outside controller sandbox). Tools in `tools/piano_roll.py` correctly route around this via `file_bridge.stage_and_run()`. The handlers are dead code kept for Windows compatibility. Do not try to fix them.
@@ -305,3 +314,5 @@ cd /Users/calvinw/develop/MacFLStudioMCP
 - **Duplicate PRForm crash** — always pass `new_window=0` to `openEventEditor` when piano roll is already visible.
 - **Generator tools removed** — LLM computes music theory natively; `gen_*` tools were redundant wrappers.
 - **Fork remote** — `origin` now points at `https://github.com/calvinw/MacFLStudioMCP.git`.
+- **Writes landing on wrong channel** — fixed. `_ensure_piano_roll_on_target` had an early-return when the current pattern index matched the target, skipping `openEventEditor`. The piano roll viewport stayed on whatever channel was last open, causing writes to go to the wrong channel. Fix: always call `channels.select` + `patterns.select` + `ui.openPianoRoll`. Confirmed: `new_window=0` makes this a smooth retarget with no window close/reopen.
+- **Human-readable event log** — `device_FLStudioMCP.py` now writes `events.log` alongside `events.jsonl` in the bridge folder. `tail -f ~/Documents/Image-Line/FL\ Studio/Settings/Hardware/fLMCP\ Bridge/events.log` to watch live. A standalone Event Investigator controller (`fl_bridge/event_investigator/`) is also available for deeper debugging without touching the bridge.

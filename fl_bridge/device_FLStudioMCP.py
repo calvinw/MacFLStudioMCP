@@ -68,7 +68,8 @@ def _script_dir():
 
 SCRIPT_DIR = _script_dir()
 BUS_DIR = SCRIPT_DIR / "bus"          # request/response files live here
-EVENTS_FILE = SCRIPT_DIR / "events.jsonl"  # append-only event stream
+EVENTS_FILE = SCRIPT_DIR / "events.jsonl"  # append-only event stream (machine-readable)
+EVENTS_LOG  = SCRIPT_DIR / "events.log"   # human-readable event stream (tail -f me)
 PIANO_ROLL_DIR_NAME = "Piano roll scripts"
 PR_REQUEST = Path(SCRIPT_DIR).parent.parent / PIANO_ROLL_DIR_NAME / "fLMCP_request.json"
 PR_STATE = Path(SCRIPT_DIR).parent.parent / PIANO_ROLL_DIR_NAME / "fLMCP_state.json"
@@ -82,6 +83,7 @@ _started_at = time.monotonic()
 _idle_tick = 0
 _last_tick_push = 0.0
 _bus_ready = False
+_event_count = 0
 
 
 # ----------------------------------------------------------------------------
@@ -173,6 +175,20 @@ def _emit_event(name, data):
             f.write(line + "\n")
     except Exception as e:
         _log("event emit failed: %s" % e)
+
+
+def _log_human(name, details=""):
+    """Append a human-readable event line to EVENTS_LOG. Best-effort, swallows errors."""
+    global _event_count
+    _event_count += 1
+    try:
+        line = "[%04d] %s" % (_event_count, name)
+        if details:
+            line += "\n     " + details
+        with open(str(EVENTS_LOG), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 
 def _purge_bus():
@@ -1863,9 +1879,11 @@ def OnInit():
         _purge_bus()
         try:
             open(str(EVENTS_FILE), "w").close()  # truncate
+            open(str(EVENTS_LOG), "w").close()
         except Exception:
             pass
         _log("bus ready: %s" % BUS_DIR)
+        _log_human("OnInit", "bridge ready — log started")
     else:
         _bus_ready = False
         _log("bus dir not present yet — will activate when it appears: %s" % BUS_DIR)
@@ -1942,9 +1960,44 @@ def OnMidiMsg(event):
     event.handled = False
 
 
+_REFRESH_FLAGS = {
+    1:     "Mixer_Sel",
+    2:     "Mixer_Display",
+    4:     "Mixer_Controls",
+    16:    "RemoteLinks",
+    32:    "FocusedWindow",
+    64:    "Performance",
+    256:   "LEDs",
+    512:   "RemoteLinkValues",
+    1024:  "Patterns",
+    2048:  "Tracks",
+    4096:  "ControlValues",
+    8192:  "Colors",
+    16384: "Names",
+    32768: "ChannelRackGroup",
+    65536: "ChannelEvent",
+}
+
+
 def OnRefresh(flags):
     try:
         _emit_event("refresh", {"flags": int(flags)})
+    except Exception:
+        pass
+    try:
+        active = [name for val, name in _REFRESH_FLAGS.items() if flags & val]
+        detail = " | ".join(active) if active else ("flags=%d" % flags)
+        if flags & 32:  # FocusedWindow
+            wid = ui.getFocusedFormID()
+            wins = {0: "Mixer", 1: "Channel Rack", 2: "Playlist", 3: "Piano Roll", 4: "Browser"}
+            detail += "  →  %s '%s'" % (wins.get(wid, "id=%d" % wid), ui.getFocusedFormCaption())
+        if flags & 256:  # LEDs
+            led = []
+            if transport.isPlaying():   led.append("PLAYING")
+            if transport.isRecording(): led.append("RECORDING")
+            led.append("Song" if transport.getLoopMode() == 1 else "Pattern")
+            detail += "  →  [%s]" % " | ".join(led)
+        _log_human("OnRefresh", detail)
     except Exception:
         pass
 
@@ -1954,3 +2007,59 @@ def OnProjectLoad(status):
         _emit_event("projectLoad", {"status": status})
     except Exception:
         pass
+    try:
+        names = {0: "PL_Start (loading)", 100: "PL_LoadOk", 101: "PL_LoadError"}
+        _log_human("OnProjectLoad", names.get(status, "status=%d" % status))
+    except Exception:
+        pass
+
+
+def OnDirtyChannel(index, flag):
+    try:
+        flag_names = {0: "CE_New", 1: "CE_Delete", 2: "CE_Replace", 3: "CE_Rename", 4: "CE_Select"}
+        fname = flag_names.get(flag, "flag=%d" % flag)
+        if index >= 0:
+            _log_human("OnDirtyChannel",
+                       "index=%d  name='%s'  %s" % (index, channels.getChannelName(index), fname))
+        else:
+            _log_human("OnDirtyChannel", "all channels  %s" % fname)
+    except Exception:
+        pass
+
+
+def OnDirtyMixerTrack(index):
+    try:
+        if index >= 0:
+            _log_human("OnDirtyMixerTrack",
+                       "index=%d  name='%s'" % (index, mixer.getTrackName(index)))
+        else:
+            _log_human("OnDirtyMixerTrack", "all tracks")
+    except Exception:
+        pass
+
+
+def OnDoFullRefresh():
+    _log_human("OnDoFullRefresh")
+
+
+def OnUpdateBeatIndicator(value):
+    _log_human("OnUpdateBeatIndicator", {0: "off", 1: "bar", 2: "beat"}.get(value, str(value)))
+
+
+def OnDisplayZone():
+    try:
+        _log_human("OnDisplayZone", "zone=%s" % playlist.getDisplayZone())
+    except Exception:
+        _log_human("OnDisplayZone")
+
+
+def OnUpdateLiveMode(lastTrack):
+    _log_human("OnUpdateLiveMode", "lastTrack=%s" % lastTrack)
+
+
+def OnWaitingForInput():
+    _log_human("OnWaitingForInput")
+
+
+def OnSendTempMsg(message, duration):
+    _log_human("OnSendTempMsg", "'%s'  %dms" % (message, duration))

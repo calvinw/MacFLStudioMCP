@@ -64,32 +64,19 @@ def _ensure_piano_roll_on_target(
 ) -> bool:
     """Switch the piano roll viewport to the target channel+pattern.
 
-    If already on the target pattern, nothing to do.
-
-    For non-empty patterns: patterns.select is sufficient — FL auto-retargets
-    the piano roll viewport. No openEventEditor needed.
-
-    For empty patterns: openEventEditor is required to move the viewport.
-    Emptiness is determined from _pattern_note_counts (populated by the read
-    sweep). current_note_count is accepted for backwards compatibility and
-    overrides the cached value when provided.
+    Always calls ui.openPianoRoll (openEventEditor) to guarantee the viewport
+    is on the correct channel — equivalent to double-clicking the pattern in
+    the Playlist. The previous early-return when already on the right pattern
+    skipped this and caused writes to land on the wrong channel when the
+    viewport was stuck on a previous channel.
     """
-    current_pattern = c.call("patterns.current")
-    if pattern is not None and current_pattern.get("index") == pattern:
-        return True
-
-    note_count = current_note_count if current_note_count is not None else _pattern_note_counts.get(pattern, 0)
-    is_empty = note_count == 0
-
-    if is_empty:
-        c.call("channels.select", index=channel)
+    c.call("channels.select", index=channel)
 
     if pattern is not None:
         c.call("patterns.select", index=pattern)
         time.sleep(0.2)
 
-    if is_empty:
-        c.call("ui.openPianoRoll", channel=channel)
+    c.call("ui.openPianoRoll", channel=channel)
 
     return True
 
